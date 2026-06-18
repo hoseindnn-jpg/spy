@@ -8,7 +8,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-TOKEN = "YOUR_BOT_TOKEN_HERE"  # توکن ربات جدید رو اینجا بذار
+TOKEN = "8898647964:AAHDany4sKVKfTbjaBFFg2lsQNnyad6gMg4"  # توکن ربات جدید رو اینجا بذار
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 DB_FILE = "spy_game.db"
 
