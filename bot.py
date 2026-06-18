@@ -16,7 +16,8 @@ DB_FILE = "spy_game.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
+    load_words_from_json()
+
     # بازی‌ها
     c.execute('''CREATE TABLE IF NOT EXISTS games (
                     game_code TEXT PRIMARY KEY,
@@ -93,6 +94,28 @@ def init_db():
 init_db()
 
 # ================ توابع کمکی ================
+def load_words_from_json():
+    """بارگذاری کلمات از فایل JSON به دیتابیس"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    try:
+        import json
+        with open('words.json', 'r', encoding='utf-8') as f:
+            words = json.load(f)
+            
+        for word_pair in words:
+            c.execute("INSERT OR IGNORE INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)",
+                      (word_pair['word1'], word_pair['word2'], 'general'))
+        
+        conn.commit()
+        print(f"✅ {len(words)} جفت‌کلمه از فایل JSON به دیتابیس اضافه شد!")
+    except FileNotFoundError:
+        print("⚠️ فایل words.json پیدا نشد! لطفاً فایل رو به پروژه اضافه کن.")
+    except Exception as e:
+        print(f"❌ خطا در بارگذاری کلمات: {e}")
+    finally:
+        conn.close()
 def generate_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
