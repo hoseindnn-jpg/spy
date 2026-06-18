@@ -168,30 +168,59 @@ def get_game_status(game_code):
 
 # ================ توزیع نقش‌ها ================
 def assign_roles(game_code, players_count):
-    """توزیع نقش‌ها بین بازیکنان"""
+    """توزیع نقش‌ها بین بازیکنان بر اساس جدول ترکیب"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
+    # دریافت لیست بازیکنان زنده
     c.execute("SELECT id FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
     players = c.fetchall()
     player_ids = [p[0] for p in players]
     
     total = len(player_ids)
-    if total < 4:
-        spy_count = 1
-        misled_count = 1
-    elif total < 7:
-        spy_count = 1
-        misled_count = 2
-    else:
-        spy_count = 2
-        misled_count = 3
     
-    citizen_count = total - spy_count - misled_count
+    # جدول ترکیب نقش‌ها بر اساس تعداد بازیکنان
+    role_mapping = {
+        3: {'spy': 0, 'misled': 1, 'citizen': 2},
+        4: {'spy': 0, 'misled': 1, 'citizen': 3},
+        5: {'spy': 1, 'misled': 1, 'citizen': 3},
+        6: {'spy': 1, 'misled': 1, 'citizen': 4},
+        7: {'spy': 1, 'misled': 2, 'citizen': 4},
+        8: {'spy': 1, 'misled': 2, 'citizen': 5},
+        9: {'spy': 1, 'misled': 3, 'citizen': 5},
+        10: {'spy': 1, 'misled': 3, 'citizen': 6},
+        11: {'spy': 2, 'misled': 3, 'citizen': 6},
+        12: {'spy': 2, 'misled': 3, 'citizen': 7},
+        13: {'spy': 2, 'misled': 4, 'citizen': 7},
+        14: {'spy': 2, 'misled': 4, 'citizen': 8},
+        15: {'spy': 2, 'misled': 5, 'citizen': 8},
+        16: {'spy': 2, 'misled': 5, 'citizen': 9},
+        17: {'spy': 3, 'misled': 5, 'citizen': 9},
+        18: {'spy': 3, 'misled': 5, 'citizen': 10},
+        19: {'spy': 3, 'misled': 6, 'citizen': 10},
+        20: {'spy': 3, 'misled': 6, 'citizen': 11},
+    }
     
+    # اعتبارسنجی تعداد بازیکنان
+    if total < 3 or total > 20:
+        conn.close()
+        return None
+    
+    # دریافت ترکیب نقش‌ها
+    roles_config = role_mapping.get(total)
+    if not roles_config:
+        conn.close()
+        return None
+    
+    spy_count = roles_config['spy']
+    misled_count = roles_config['misled']
+    citizen_count = roles_config['citizen']
+    
+    # ایجاد لیست نقش‌ها
     roles = ['citizen'] * citizen_count + ['misled'] * misled_count + ['spy'] * spy_count
     random.shuffle(roles)
     
+    # اختصاص نقش به بازیکنان
     for player_id, role in zip(player_ids, roles):
         c.execute("UPDATE players SET role = ? WHERE id = ?", (role, player_id))
     
@@ -223,7 +252,13 @@ def get_word_for_role(word_pair_id, role):
         return word2
     else:
         return None
-
+def get_alive_players_count(game_code):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
 # ================ مسیرهای اصلی ================
 @app.route('/')
 def home():
@@ -279,8 +314,8 @@ def webhook():
                 c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
                 count = c.fetchone()[0]
                 
-                if count < 4:
-                    send_message(chat_id, f"⚠️ تعداد بازیکنان ({count}) کافی نیست!\n\nحداقل ۴ نفر برای شروع بازی لازمه.\n\nبازیکنان بیشتری ثبت‌نام کنن.")
+                if count < 3:
+                    send_message(chat_id, f"⚠️ تعداد بازیکنان ({count}) کافی نیست!\n\nحداقل 3 نفر برای شروع بازی لازمه.\n\nبازیکنان بیشتری ثبت‌نام کنن.")
                 else:
                     role_counts = assign_roles(game_code, count)
                     word_pair = get_word_pair()
