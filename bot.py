@@ -255,12 +255,17 @@ def webhook():
                 conn.close()
                 
                 keyboard = {
-                    "inline_keyboard": [
-                        [{"text": "🔗 دریافت لینک ثبت‌نام", "callback_data": f"get_link:{game_code}"}],
-                        [{"text": "✅ پایان ثبت‌نام", "callback_data": f"finish_register:{game_code}"}]
+        "inline_keyboard": [
+            [{"text": "✅ پایان ثبت‌نام", "callback_data": f"finish_register:{game_code}"}]
                     ]
                 }
-                send_message(chat_id, f"🎮 بازی جاسوس جدید ساخته شد!\n\n📋 کد بازی: <code>{game_code}</code>\n\nلینک ثبت‌نام رو دریافت کن و برای دوستان بفرست.", keyboard)
+                send_message(chat_id, 
+                 f"🎮 بازی جاسوس جدید ساخته شد!\n\n"
+                 f"📋 کد بازی: <code>{game_code}</code>\n\n"
+                 f"🔗 لینک ثبت‌نام:\n{register_link}\n\n"
+                 f"این لینک رو برای دوستان بفرست تا بتونن عضو بشن.\n\n"
+                 f"بعد از ثبت‌نام همه، روی دکمه «پایان ثبت‌نام» کلیک کن.",
+                 keyboard)
             
             # دریافت لینک ثبت‌نام
             elif data.startswith("get_link:"):
