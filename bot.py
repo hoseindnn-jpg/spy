@@ -12,6 +12,9 @@ TOKEN = "8898647964:AAHDany4sKVKfTbjaBFFg2lsQNnyad6gMg4"
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 DB_FILE = "spy_game.db"
 
+# دیکشنری برای ذخیره کاربرانی که در حال انتخاب اسم مستعار هستن
+pending_registrations = {}
+
 # ================ دیتابیس ================
 def load_words_from_json():
     """بارگذاری کلمات از فایل JSON به دیتابیس"""
@@ -447,12 +450,65 @@ def webhook():
                 send_message(chat_id, "❌ این بازی در حال ثبت‌نام نیست یا تموم شده!")
                 return jsonify({"ok": True})
             
-            # درخواست اسم مستعار
-            send_message(chat_id, "👤 لطفاً یک <b>اسم مستعار</b> برای خودت انتخاب کن:\n\n(این اسم توی بازی نمایش داده میشه)")
+            # بررسی اینکه کاربر قبلاً ثبت‌نام نکرده باشه
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT id FROM players WHERE game_code = ? AND user_id = ?", (game_code, user_id))
+            existing = c.fetchone()
+            conn.close()
+            
+            if existing:
+                send_message(chat_id, "✅ شما قبلاً در این بازی ثبت‌نام کردید!")
+                return jsonify({"ok": True})
+            
+            # ذخیره کاربر در حالت انتظار
+            pending_registrations[user_id] = game_code
+            send_message(chat_id, "👤 لطفاً یک <b>اسم مستعار</b> برای خودت انتخاب کن:\n\n(این اسم توی بازی نمایش داده میشه)\n\n✏️ فقط اسم رو تایپ کن و بفرست.")
             return jsonify({"ok": True})
         
         # دریافت اسم مستعار (ادامه ثبت‌نام)
-        # (در نسخه کامل)
+        if user_id in pending_registrations:
+            game_code = pending_registrations[user_id]
+            
+            # اعتبارسنجی اسم مستعار
+            if len(text.strip()) < 2:
+                send_message(chat_id, "❌ اسم مستعار باید حداقل ۲ کاراکتر باشه. لطفاً دوباره تلاش کن.")
+                return jsonify({"ok": True})
+            
+            # بررسی تکراری نبودن اسم مستعار در این بازی
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT display_name FROM players WHERE game_code = ? AND display_name = ?", (game_code, text.strip()))
+            duplicate = c.fetchone()
+            
+            if duplicate:
+                send_message(chat_id, f"❌ اسم مستعار «{text.strip()}» قبلاً توسط کس دیگه‌ای انتخاب شده! لطفاً اسم دیگه‌ای انتخاب کن.")
+                conn.close()
+                return jsonify({"ok": True})
+            
+            # ثبت‌نام کاربر در بازی
+            c.execute("""
+                INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at) 
+                VALUES (?, ?, ?, 'citizen', 1, 0, ?)
+            """, (game_code, user_id, text.strip(), datetime.now().isoformat()))
+            conn.commit()
+            
+            # حذف از حالت انتظار
+            del pending_registrations[user_id]
+            
+            send_message(chat_id, f"✅ شما با اسم مستعار «{text.strip()}» در بازی ثبت‌نام شدید!\n\nمنتظر شروع بازی توسط مدیر باشید.")
+            
+            # اطلاع به مدیر
+            c.execute("SELECT admin_id FROM games WHERE game_code = ?", (game_code,))
+            admin = c.fetchone()
+            conn.close()
+            
+            if admin:
+                send_message(admin[0], f"🔔 کاربر جدید با اسم «{text.strip()}» به بازی پیوست.\n\nتعداد بازیکنان فعلی: {get_players_count(game_code)} نفر")
+            
+            return jsonify({"ok": True})
+                    
+        # ... بقیه پیام‌ها (در صورت نیاز)
         
         return jsonify({"ok": True})
     
