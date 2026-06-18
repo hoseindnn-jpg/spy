@@ -238,26 +238,27 @@ def webhook():
         
         # هندل دکمه‌ها
         if "callback_query" in update:
-            cb = update["callback_query"]
-            data = cb["data"]
-            chat_id = cb["message"]["chat"]["id"]
-            user_id = cb["from"]["id"]
-            message_id = cb["message"]["message_id"]
+            try:
+                cb = update["callback_query"]
+                data = cb["data"]
+                chat_id = cb["message"]["chat"]["id"]
+                user_id = cb["from"]["id"]
+                message_id = cb["message"]["message_id"]
             
             # شروع بازی جدید از صفحه اصلی
             # شروع بازی جدید از صفحه اصلی
-if data == "new_game":
-    game_code = generate_code()
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("INSERT INTO games (game_code, admin_id, status, created_at) VALUES (?, ?, 'registering', ?)",
-              (game_code, user_id, datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
+    if data == "new_game":
+        game_code = generate_code()
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO games (game_code, admin_id, status, created_at) VALUES (?, ?, 'registering', ?)",
+                  (game_code, user_id, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
     
-    bot_info = requests.get(f"{BASE_URL}/getMe").json()
-    bot_username = bot_info['result']['username']
-    register_link = f"https://t.me/{bot_username}?start=register_{game_code}"
+        bot_info = requests.get(f"{BASE_URL}/getMe").json()
+        bot_username = bot_info['result']['username']
+        register_link = f"https://t.me/{bot_username}?start=register_{game_code}"
     
     keyboard = {
         "inline_keyboard": [
