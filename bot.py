@@ -8,7 +8,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-TOKEN = "8898647964:AAHDany4sKVKfTbjaBFFg2lsQNnyad6gMg4"  # توکن ربات جدید رو اینجا بذار
+TOKEN = "8898647964:AAHDany4sKVKfTbjaBFFg2lsQNnyad6gMg4"
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 DB_FILE = "spy_game.db"
 
@@ -17,16 +17,13 @@ def load_words_from_json():
     """بارگذاری کلمات از فایل JSON به دیتابیس"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
     try:
         import json
         with open('words.json', 'r', encoding='utf-8') as f:
             words = json.load(f)
-            
         for word_pair in words:
             c.execute("INSERT OR IGNORE INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)",
                       (word_pair['word1'], word_pair['word2'], 'general'))
-        
         conn.commit()
         print(f"✅ {len(words)} جفت‌کلمه از فایل JSON به دیتابیس اضافه شد!")
     except FileNotFoundError:
@@ -35,16 +32,16 @@ def load_words_from_json():
         print(f"❌ خطا در بارگذاری کلمات: {e}")
     finally:
         conn.close()
+
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    load_words_from_json()
-
+    
     # بازی‌ها
     c.execute('''CREATE TABLE IF NOT EXISTS games (
                     game_code TEXT PRIMARY KEY,
                     admin_id INTEGER,
-                    status TEXT DEFAULT 'registering',  -- registering, playing, finished
+                    status TEXT DEFAULT 'registering',
                     created_at TEXT,
                     round_number INTEGER DEFAULT 0
                  )''')
@@ -55,7 +52,7 @@ def init_db():
                     game_code TEXT,
                     user_id INTEGER,
                     display_name TEXT,
-                    role TEXT,  -- citizen, misled, spy
+                    role TEXT,
                     is_alive INTEGER DEFAULT 1,
                     score INTEGER DEFAULT 0,
                     joined_at TEXT,
@@ -77,7 +74,7 @@ def init_db():
                     game_code TEXT,
                     round_number INTEGER,
                     word_pair_id INTEGER,
-                    status TEXT DEFAULT 'speaking',  -- speaking, voting, finished
+                    status TEXT DEFAULT 'speaking',
                     started_at TEXT,
                     ended_at TEXT,
                     FOREIGN KEY (game_code) REFERENCES games (game_code),
@@ -112,18 +109,22 @@ def init_db():
     
     conn.commit()
     conn.close()
+    
+    # بارگذاری کلمات از فایل JSON
+    load_words_from_json()
 
 init_db()
 
 # ================ توابع کمکی ================
-
 def generate_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-def send_message(chat_id, text, reply_markup=None):
+def send_message(chat_id, text, reply_markup=None, disable_web_page_preview=False):
     data = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if reply_markup:
         data["reply_markup"] = reply_markup
+    if disable_web_page_preview:
+        data["disable_web_page_preview"] = True
     try:
         requests.post(f"{BASE_URL}/sendMessage", json=data, timeout=10)
     except Exception as e:
@@ -168,12 +169,10 @@ def assign_roles(game_code, players_count):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # دریافت لیست بازیکنان زنده
     c.execute("SELECT id FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
     players = c.fetchall()
     player_ids = [p[0] for p in players]
     
-    # محاسبه تعداد نقش‌ها
     total = len(player_ids)
     if total < 4:
         spy_count = 1
@@ -187,11 +186,9 @@ def assign_roles(game_code, players_count):
     
     citizen_count = total - spy_count - misled_count
     
-    # ایجاد لیست نقش‌ها
     roles = ['citizen'] * citizen_count + ['misled'] * misled_count + ['spy'] * spy_count
     random.shuffle(roles)
     
-    # اختصاص نقش به بازیکنان
     for player_id, role in zip(player_ids, roles):
         c.execute("UPDATE players SET role = ? WHERE id = ?", (role, player_id))
     
@@ -221,8 +218,8 @@ def get_word_for_role(word_pair_id, role):
         return word1
     elif role == 'misled':
         return word2
-    else:  # spy
-        return None  # جاسوس کلمه نمی‌بینه
+    else:
+        return None
 
 # ================ مسیرهای اصلی ================
 @app.route('/')
@@ -238,49 +235,37 @@ def webhook():
         
         # هندل دکمه‌ها
         if "callback_query" in update:
-            try:
-                cb = update["callback_query"]
-                data = cb["data"]
-                chat_id = cb["message"]["chat"]["id"]
-                user_id = cb["from"]["id"]
-                message_id = cb["message"]["message_id"]
+            cb = update["callback_query"]
+            data = cb["data"]
+            chat_id = cb["message"]["chat"]["id"]
+            user_id = cb["from"]["id"]
             
             # شروع بازی جدید از صفحه اصلی
-            # شروع بازی جدید از صفحه اصلی
-    if data == "new_game":
-        game_code = generate_code()
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("INSERT INTO games (game_code, admin_id, status, created_at) VALUES (?, ?, 'registering', ?)",
-                  (game_code, user_id, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
-    
-        bot_info = requests.get(f"{BASE_URL}/getMe").json()
-        bot_username = bot_info['result']['username']
-        register_link = f"https://t.me/{bot_username}?start=register_{game_code}"
-    
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "✅ پایان ثبت‌نام", "callback_data": f"finish_register:{game_code}"}]
-        ]
-    }
-    send_message(chat_id, 
-                 f"🎮 بازی جاسوس جدید ساخته شد!\n\n"
-                 f"📋 کد بازی: <code>{game_code}</code>\n\n"
-                 f"🔗 لینک ثبت‌نام:\n{register_link}\n\n"
-                 f"این لینک رو برای دوستان بفرست تا بتونن عضو بشن.\n\n"
-                 f"بعد از ثبت‌نام همه، روی دکمه «پایان ثبت‌نام» کلیک کن.",
-                 keyboard)
-            
-            # دریافت لینک ثبت‌نام
-            elif data.startswith("get_link:"):
-                game_code = data.split(":")[1]
+            if data == "new_game":
+                game_code = generate_code()
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute("INSERT INTO games (game_code, admin_id, status, created_at) VALUES (?, ?, 'registering', ?)",
+                          (game_code, user_id, datetime.now().isoformat()))
+                conn.commit()
+                conn.close()
+                
                 bot_info = requests.get(f"{BASE_URL}/getMe").json()
                 bot_username = bot_info['result']['username']
                 register_link = f"https://t.me/{bot_username}?start=register_{game_code}"
                 
-                send_message(chat_id, f"🔗 لینک ثبت‌نام در بازی:\n{register_link}\n\nاین لینک رو برای دوستان بفرست تا بتونن عضو بشن.", disable_web_page_preview=True)
+                keyboard = {
+                    "inline_keyboard": [
+                        [{"text": "✅ پایان ثبت‌نام", "callback_data": f"finish_register:{game_code}"}]
+                    ]
+                }
+                send_message(chat_id, 
+                             f"🎮 بازی جاسوس جدید ساخته شد!\n\n"
+                             f"📋 کد بازی: <code>{game_code}</code>\n\n"
+                             f"🔗 لینک ثبت‌نام:\n{register_link}\n\n"
+                             f"این لینک رو برای دوستان بفرست تا بتونن عضو بشن.\n\n"
+                             f"بعد از ثبت‌نام همه، روی دکمه «پایان ثبت‌نام» کلیک کن.",
+                             keyboard)
             
             # پایان ثبت‌نام
             elif data.startswith("finish_register:"):
@@ -288,18 +273,15 @@ def webhook():
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 
-                # بررسی تعداد بازیکنان
                 c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
                 count = c.fetchone()[0]
                 
                 if count < 4:
                     send_message(chat_id, f"⚠️ تعداد بازیکنان ({count}) کافی نیست!\n\nحداقل ۴ نفر برای شروع بازی لازمه.\n\nبازیکنان بیشتری ثبت‌نام کنن.")
                 else:
-                    # توزیع نقش‌ها
                     role_counts = assign_roles(game_code, count)
-                    
-                    # انتخاب جفت کلمه
                     word_pair = get_word_pair()
+                    
                     if not word_pair:
                         send_message(chat_id, "❌ هیچ جفت کلمه‌ای در دیتابیس وجود نداره! لطفاً ابتدا کلمات رو اضافه کن.")
                         conn.close()
@@ -307,7 +289,6 @@ def webhook():
                     
                     word_pair_id, word1, word2, category = word_pair
                     
-                    # ذخیره دور جدید
                     c.execute("UPDATE games SET status = 'playing', round_number = round_number + 1 WHERE game_code = ?", 
                              (game_code,))
                     c.execute("SELECT round_number FROM games WHERE game_code = ?", (game_code,))
@@ -317,12 +298,9 @@ def webhook():
                               (game_code, round_number, word_pair_id, datetime.now().isoformat()))
                     round_id = c.lastrowid
                     
-                    # افزایش تعداد استفاده از کلمه
                     c.execute("UPDATE word_pairs SET used_count = used_count + 1 WHERE id = ?", (word_pair_id,))
-                    
                     conn.commit()
                     
-                    # ارسال کلمات به بازیکنان
                     c.execute("SELECT id, user_id, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
                     players = c.fetchall()
                     
@@ -350,24 +328,19 @@ def webhook():
                 game_code = parts[1]
                 round_id = int(parts[2])
                 
-                # بررسی اینکه همه صحبت کردن یا نه (در نسخه کامل)
-                
-                # نمایش دکمه‌های رای برای همه
                 alive_players = get_alive_players(game_code)
                 
                 for player in alive_players:
                     player_id, player_user_id, player_name, role = player
                     
-                    # ساخت دکمه‌های رای (به جز خودش)
                     vote_buttons = []
                     for target in alive_players:
-                        if target[0] != player_id:  # به خودش رای نده
+                        if target[0] != player_id:
                             vote_buttons.append([{"text": target[2], "callback_data": f"vote:{round_id}:{player_id}:{target[0]}"}])
                     
                     keyboard = {"inline_keyboard": vote_buttons}
                     send_message(player_user_id, f"🗳️ <b>دور رای‌گیری</b>\n\nبه کسی که فکر می‌کنی جاسوسه رای بده:", keyboard)
                 
-                # پیام به مدیر
                 keyboard = {
                     "inline_keyboard": [
                         [{"text": "✅ پایان رای‌گیری", "callback_data": f"finish_voting:{game_code}:{round_id}"}]
@@ -385,7 +358,6 @@ def webhook():
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 
-                # ذخیره یا بروزرسانی رای
                 c.execute("SELECT id FROM votes WHERE round_id = ? AND voter_id = ?", (round_id, voter_id))
                 existing = c.fetchone()
                 
@@ -410,7 +382,6 @@ def webhook():
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 
-                # بررسی تعداد رای‌ها
                 alive_players = get_alive_players(game_code)
                 total_players = len(alive_players)
                 
@@ -420,7 +391,6 @@ def webhook():
                 if voted_count < total_players:
                     send_message(chat_id, f"⚠️ فقط {voted_count} نفر از {total_players} نفر رای دادن!\n\nهمه باید رای بدن. صبر کن تا همه رای بدن.")
                 else:
-                    # محاسبه بیشترین رای
                     c.execute("""
                         SELECT target_id, COUNT(*) as vote_count 
                         FROM votes 
@@ -434,7 +404,6 @@ def webhook():
                     if result:
                         target_id, vote_count = result
                         
-                        # حذف بازیکن
                         c.execute("UPDATE players SET is_alive = 0 WHERE id = ?", (target_id,))
                         c.execute("SELECT display_name, role FROM players WHERE id = ?", (target_id,))
                         eliminated = c.fetchone()
@@ -443,8 +412,6 @@ def webhook():
                         conn.close()
                         
                         send_message(chat_id, f"⛔️ <b>{eliminated[0]}</b> با {vote_count} رای حذف شد!\n\nنقش اون: {eliminated[1]}")
-                        
-                        # بررسی شرایط برنده شدن (ادامه در نسخه کامل)
                     else:
                         conn.close()
                         send_message(chat_id, "❌ مشکلی در رای‌گیری پیش اومد!")
@@ -482,8 +449,6 @@ def webhook():
             
             # درخواست اسم مستعار
             send_message(chat_id, "👤 لطفاً یک <b>اسم مستعار</b> برای خودت انتخاب کن:\n\n(این اسم توی بازی نمایش داده میشه)")
-            
-            # ذخیره کاربر برای مرحله بعد (در نسخه کامل)
             return jsonify({"ok": True})
         
         # دریافت اسم مستعار (ادامه ثبت‌نام)
