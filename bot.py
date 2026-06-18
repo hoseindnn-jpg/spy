@@ -245,21 +245,26 @@ def webhook():
             message_id = cb["message"]["message_id"]
             
             # شروع بازی جدید از صفحه اصلی
-            if data == "new_game":
-                game_code = generate_code()
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute("INSERT INTO games (game_code, admin_id, status, created_at) VALUES (?, ?, 'registering', ?)",
-                          (game_code, user_id, datetime.now().isoformat()))
-                conn.commit()
-                conn.close()
-                
-                keyboard = {
+            # شروع بازی جدید از صفحه اصلی
+if data == "new_game":
+    game_code = generate_code()
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT INTO games (game_code, admin_id, status, created_at) VALUES (?, ?, 'registering', ?)",
+              (game_code, user_id, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    
+    bot_info = requests.get(f"{BASE_URL}/getMe").json()
+    bot_username = bot_info['result']['username']
+    register_link = f"https://t.me/{bot_username}?start=register_{game_code}"
+    
+    keyboard = {
         "inline_keyboard": [
             [{"text": "✅ پایان ثبت‌نام", "callback_data": f"finish_register:{game_code}"}]
-                    ]
-                }
-                send_message(chat_id, 
+        ]
+    }
+    send_message(chat_id, 
                  f"🎮 بازی جاسوس جدید ساخته شد!\n\n"
                  f"📋 کد بازی: <code>{game_code}</code>\n\n"
                  f"🔗 لینک ثبت‌نام:\n{register_link}\n\n"
