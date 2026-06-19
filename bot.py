@@ -781,4 +781,34 @@ def end_game(game_code, chat_id, round_id=None):
             SELECT p.display_name, p.role, p.score 
             FROM players p
             JOIN rounds r ON r.game_code = p.game_code
-            WHERE p.game_code = ? AND r.id =
+            WHERE p.game_code = ? AND r.id = ?
+        """, (game_code, round_id))
+    else:
+        # نتایج نهایی بازی
+        c.execute("""
+            SELECT p.display_name, p.role, p.score 
+            FROM players p
+            WHERE p.game_code = ?
+            ORDER BY p.score DESC
+        """, (game_code,))
+    
+    players_data = c.fetchall()
+    conn.close()
+
+    if not players_data:
+        send_message(chat_id, "⚠️ هیچ داده‌ای برای نمایش وجود ندارد!")
+        return
+
+    # ساخت پیام نتایج
+    message = "🏁 <b>نتیجه بازی:</b>\n\n"
+    
+    for display_name, role, score in players_data:
+        role_persian = get_role_persian(role)
+        message += f"• {display_name} → {role_persian} | امتیاز: {score}\n"
+    
+    # اضافه کردن برنده
+    if players_data:
+        winner = players_data[0]
+        message += f"\n🏆 <b>برنده: {winner[0]} با {winner[2]} امتیاز!</b>"
+
+    send_message(chat_id, message)
