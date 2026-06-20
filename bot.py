@@ -432,22 +432,22 @@ def webhook():
             data = cb["data"]
             chat_id = cb["message"]["chat"]["id"]
             user_id = cb["from"]["id"]
-        if data == "check_membership":
-        user_id = cb["from"]["id"]
-        chat_id = cb["message"]["chat"]["id"]
-        if is_user_member_of_channel(user_id, CHANNEL_USERNAME):
-            # کاربر عضو شده، می‌تواند ادامه دهد
-            send_message(chat_id, "✅ عضویت شما تأیید شد! حالا می‌توانید از ربات استفاده کنید.")
-            # در اینجا می‌توانید منوی اصلی ربات را مجدداً نمایش دهید
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "🎮 شروع بازی جدید", "callback_data": "new_game"}]
-                ]
-            }
-            send_message(chat_id, "🕵️‍♂️ به ربات خوش آمدید! لطفاً یکی از گزینه‌ها را انتخاب کنید:", keyboard)
-        else:
-            # کاربر هنوز عضو نشده است
-            send_message(chat_id, "❌ شما هنوز عضو کانال نشدید! لطفاً ابتدا روی دکمه «عضویت در کانال» کلیک کنید و سپس «عضو شدم» را بزنید.")
+                if data == "check_membership":
+            user_id = cb["from"]["id"]
+            chat_id = cb["message"]["chat"]["id"]
+            if is_user_member_of_channel(user_id, CHANNEL_USERNAME):
+                # کاربر عضو شده، می‌تواند ادامه دهد
+                send_message(chat_id, "✅ عضویت شما تأیید شد! حالا می‌توانید از ربات استفاده کنید.")
+                # در اینجا می‌توانید منوی اصلی ربات را مجدداً نمایش دهید
+                keyboard = {
+                    "inline_keyboard": [
+                        [{"text": "🎮 شروع بازی جدید", "callback_data": "new_game"}]
+                    ]
+                }
+                send_message(chat_id, "🕵️‍♂️ به ربات خوش آمدید! لطفاً یکی از گزینه‌ها را انتخاب کنید:", keyboard)
+            else:
+                # کاربر هنوز عضو نشده است
+                send_message(chat_id, "❌ شما هنوز عضو کانال نشدید! لطفاً ابتدا روی دکمه «عضویت در کانال» کلیک کنید و سپس «عضو شدم» را بزنید.")
     # --------------------------------
             # شروع بازی جدید از صفحه اصلی
             if data == "new_game":
