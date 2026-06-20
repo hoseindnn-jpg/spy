@@ -18,6 +18,29 @@ pending_registrations = {}
 pending_spy_guesses = {}
 
 # ================ دیتابیس (ساده‌شده) ================
+def is_user_member_of_channel(user_id, channel_username):
+    """
+    بررسی می‌کند که آیا کاربر در کانال عضو است یا خیر.
+    channel_username: نام کاربری کانال بدون @ (مثلاً 'nishgoonnn')
+    """
+    try:
+        url = f"{BASE_URL}/getChatMember"
+        params = {
+            "chat_id": f"@{channel_username}",
+            "user_id": user_id
+        }
+        response = requests.get(url, params=params, timeout=10).json()
+        
+        if response["ok"]:
+            status = response["result"]["status"]
+            # وضعیت‌های 'member', 'creator', 'administrator' یعنی عضو است
+            return status in ["member", "creator", "administrator"]
+        else:
+            print(f"Error checking membership: {response}")
+            return False
+    except Exception as e:
+        print(f"Exception in is_user_member: {e}")
+        return False
 def load_words_from_json():
     """بارگذاری کلمات از فایل JSON به دیتابیس"""
     conn = sqlite3.connect(DB_FILE)
@@ -372,14 +395,60 @@ def webhook():
         update = request.get_json()
         if not update:
             return jsonify({"ok": True})
+        user_id = None
+        if "message" in update:
+            user_id = update["message"]["from"]["id"]
+            chat_id = update["message"]["chat"]["id"]
+            # اگر کاربر در حال ثبت‌نام است، استثنا قائل نشوید (می‌خواهید او را مجبور به عضویت کنید)
+        elif "callback_query" in update:
+            user_id = update["callback_query"]["from"]["id"]
+            chat_id = update["callback_query"]["message"]["chat"]["id"]
+        else:
+            return jsonify({"ok": True})
 
+        # نام کاربری کانال (بدون @)
+        CHANNEL_USERNAME = "nishgoonnn"  # <--- نام کاربری کانال خود را اینجا وارد کنید
+
+        # بررسی عضویت (فقط اگر کاربر هنوز عضو نیست و ربات درخواست عضویت نداده)
+        if not is_user_member_of_channel(user_id, CHANNEL_USERNAME):
+            # ساخت دکمه برای پیوستن به کانال
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "🔗 عضویت در کانال", "url": "https://t.me/nishgoonnn"}],
+                    [{"text": "✅ عضو شدم", "callback_data": "check_membership"}]
+                ]
+            }
+            send_message(
+                chat_id,
+                "🎭 <b>برای استفاده از ربات، ابتدا باید عضو کانال ما شوید!</b>\n\n"
+                "📢 در کانال «مرجع بازی های گروهی و خانوادگی» جدیدترین بازی‌ها و آموزش‌ها رو ببینید.\n\n"
+                "👇 لطفاً روی دکمه زیر کلیک کنید و سپس «عضو شدم» را بزنید.",
+                reply_markup=keyboard
+            )
+            return jsonify({"ok": True})
         # هندل دکمه‌ها
         if "callback_query" in update:
             cb = update["callback_query"]
             data = cb["data"]
             chat_id = cb["message"]["chat"]["id"]
             user_id = cb["from"]["id"]
-
+        if data == "check_membership":
+        user_id = cb["from"]["id"]
+        chat_id = cb["message"]["chat"]["id"]
+        if is_user_member_of_channel(user_id, CHANNEL_USERNAME):
+            # کاربر عضو شده، می‌تواند ادامه دهد
+            send_message(chat_id, "✅ عضویت شما تأیید شد! حالا می‌توانید از ربات استفاده کنید.")
+            # در اینجا می‌توانید منوی اصلی ربات را مجدداً نمایش دهید
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "🎮 شروع بازی جدید", "callback_data": "new_game"}]
+                ]
+            }
+            send_message(chat_id, "🕵️‍♂️ به ربات خوش آمدید! لطفاً یکی از گزینه‌ها را انتخاب کنید:", keyboard)
+        else:
+            # کاربر هنوز عضو نشده است
+            send_message(chat_id, "❌ شما هنوز عضو کانال نشدید! لطفاً ابتدا روی دکمه «عضویت در کانال» کلیک کنید و سپس «عضو شدم» را بزنید.")
+    # --------------------------------
             # شروع بازی جدید از صفحه اصلی
             if data == "new_game":
                 conn = sqlite3.connect(DB_FILE)
