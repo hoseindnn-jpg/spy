@@ -15,7 +15,7 @@ DB_FILE = "spy_game.db"
 # دیکشنری‌ها
 pending_registrations = {}
 pending_spy_guesses = {}
-pending_single_player_names = {}  # برای حالت تک‌نفره - ذخیره اسامی موقت
+pending_single_player_names = {}
 
 # ================ تابع بررسی عضویت در کانال ================
 def is_user_member_of_channel(user_id, channel_username):
@@ -57,6 +57,37 @@ def load_words_from_json():
         print(f"❌ خطا در بارگذاری کلمات: {e}")
     finally:
         conn.close()
+
+def add_default_word_pairs():
+    """اضافه کردن جفت‌کلمه‌های پیش‌فرض به دیتابیس"""
+    default_pairs = [
+        ("سینما", "تئاتر"), ("مدرسه", "دانشگاه"), ("رستوران", "کافه"),
+        ("کتاب", "مجله"), ("دریا", "اقیانوس"), ("کوه", "تپه"),
+        ("ماشین", "موتور"), ("گربه", "سگ"), ("پیتزا", "ساندویچ"),
+        ("شیرینی", "کیک"), ("باغ", "جنگل"), ("شهر", "روستا"),
+        ("هواپیما", "هلیکوپتر"), ("قطار", "اتوبوس"), ("کفش", "چکمه"),
+        ("کلاه", "عینک"), ("شب", "روز"), ("تابستان", "زمستان"),
+        ("عشق", "دوستی"), ("انرژی", "قدرت"), ("پارک", "باغ وحش"),
+        ("آشپزخانه", "رستوران"), ("ماهی", "پرنده"), ("صندلی", "میز"),
+        ("تلفن", "تبلت"), ("لباس", "کت"), ("برف", "باران"),
+        ("آفتاب", "ماه"), ("تخت", "مبل"), ("چای", "قهوه"),
+        ("نان", "کیک"), ("لبخند", "خنده"), ("گریه", "ناراحتی"),
+        ("سفر", "مهاجرت"), ("خرید", "فروش"), ("مهمانی", "جشن"),
+        ("عروسی", "نامزدی"), ("بیمارستان", "درمانگاه"), ("پزشک", "پرستار"),
+        ("معلم", "استاد"), ("دانشجو", "دانش‌آموز"), ("چراغ", "لامپ"),
+        ("فرش", "موکت"), ("تخم‌مرغ", "مرغ"), ("شیر", "ماست"),
+        ("نانوایی", "سوپرمارکت"), ("باشگاه", "سالن ورزشی"), ("قلم", "مداد"),
+        ("کیف", "کوله‌پشتی"), ("کودک", "نوجوان")
+    ]
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    for word1, word2 in default_pairs:
+        c.execute("INSERT OR IGNORE INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)",
+                  (word1, word2, 'general'))
+    conn.commit()
+    conn.close()
+    print(f"✅ {len(default_pairs)} جفت‌کلمه پیش‌فرض به دیتابیس اضافه شد!")
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
@@ -118,6 +149,8 @@ def init_db():
     
     conn.commit()
     conn.close()
+    
+    add_default_word_pairs()
     load_words_from_json()
 
 init_db()
@@ -262,7 +295,6 @@ def get_word_for_role(word_pair_id, role):
     else:
         return None
 
-# ================ امتیازدهی ================
 def add_score_to_team(game_code, role, points):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -271,7 +303,6 @@ def add_score_to_team(game_code, role, points):
     conn.commit()
     conn.close()
 
-# ================ توابع اصلی بازی ================
 def start_new_game(chat_id, admin_id, game_mode='multi'):
     """شروع بازی جدید با حالت مشخص"""
     game_code = generate_code()
@@ -283,17 +314,14 @@ def start_new_game(chat_id, admin_id, game_mode='multi'):
     conn.close()
     
     if game_mode == 'single':
-        # حالت تک‌نفره - درخواست تعداد بازیکنان
-        send_message(chat_id, 
+        send_message(chat_id,  
                     f"🎮 بازی جاسوس (حالت تک‌نفره) ساخته شد!\n\n"
                     f"📋 کد بازی: <code>{game_code}</code>\n\n"
                     f"تعداد بازیکنان را وارد کنید (۳ تا ۲۰):")
     else:
-        # حالت چندنفره - لینک ثبت‌نام
         bot_info = requests.get(f"{BASE_URL}/getMe").json()
         bot_username = bot_info['result']['username']
         register_link = f"https://t.me/{bot_username}?start=register_{game_code}"
-        
         keyboard = {
             "inline_keyboard": [
                 [{"text": "✅ پایان ثبت‌نام", "callback_data": f"finish_register:{game_code}"}]
@@ -312,7 +340,6 @@ def start_game_round(game_code, chat_id):
     c = conn.cursor()
     
     c.execute("DELETE FROM votes WHERE round_id IN (SELECT id FROM rounds WHERE game_code = ?)", (game_code,))
-    
     c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
     count = c.fetchone()[0]
     
@@ -349,14 +376,14 @@ def start_game_round(game_code, chat_id):
     game_mode = get_game_mode(game_code)
     
     if game_mode == 'single':
-        # حالت تک‌نفره - نمایش نقش‌ها به صورت متوالی
         c.execute("SELECT id, user_id, display_name, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
         players = c.fetchall()
         conn.close()
+        
         if not players:
-        send_message(chat_id, "❌ هیچ بازیکنی ثبت نشده است!")
-        return
-        # ذخیره لیست بازیکنان برای نمایش متوالی
+            send_message(chat_id, "❌ هیچ بازیکنی ثبت نشده است!")
+            return
+        
         pending_single_player_names[game_code] = {
             'players': players,
             'current_index': 0,
@@ -364,7 +391,6 @@ def start_game_round(game_code, chat_id):
             'round_number': round_number
         }
         
-        # نمایش اولین بازیکن
         show_next_single_player(game_code, chat_id)
         
         keyboard = {
@@ -375,7 +401,6 @@ def start_game_round(game_code, chat_id):
         send_message(chat_id, "👤 برای مشاهده نقش هر بازیکن، دکمه «نفر بعدی» را بزنید.", keyboard)
         
     else:
-        # حالت چندنفره - ارسال کلمات به بازیکنان
         c.execute("SELECT id, user_id, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
         players = c.fetchall()
         
@@ -414,7 +439,6 @@ def show_next_single_player(game_code, chat_id):
     
     if current_index >= len(players):
         send_message(chat_id, "✅ همه نقش‌ها نمایش داده شدند!\n\nاکنون می‌توانید رای‌گیری حضوری را شروع کنید.")
-        # حذف از pending
         del pending_single_player_names[game_code]
         return
     
@@ -439,7 +463,6 @@ def show_next_single_player(game_code, chat_id):
     
     send_message(chat_id, message)
     
-    # به‌روزرسانی اندیس
     data['current_index'] = current_index + 1
     pending_single_player_names[game_code] = data
 
@@ -532,7 +555,6 @@ def webhook():
                     }
                     send_message(chat_id, "⚠️ شما یک بازی ناتمام دارید. آیا می‌خواهید آن را حذف کرده و بازی جدیدی شروع کنید؟", keyboard)
                 else:
-                    # نمایش گزینه‌های انتخاب حالت بازی
                     keyboard = {
                         "inline_keyboard": [
                             [{"text": "👥 چند نفره", "callback_data": f"start_game_mode:multi:{user_id}"}],
@@ -543,7 +565,6 @@ def webhook():
                                         "👥 <b>چند نفره:</b> هر بازیکن با گوشی خودش وارد می‌شود\n"
                                         "📱 <b>تک گوشی:</b> همه روی یک گوشی بازی می‌کنند", keyboard)
             
-            # انتخاب حالت بازی
             elif data.startswith("start_game_mode:"):
                 parts = data.split(":")
                 game_mode = parts[1]
@@ -561,7 +582,6 @@ def webhook():
                     conn.commit()
                     conn.close()
                     
-                    # نمایش گزینه‌های انتخاب حالت بازی
                     keyboard = {
                         "inline_keyboard": [
                             [{"text": "👥 چند نفره", "callback_data": f"start_game_mode:multi:{user_id}"}],
@@ -572,7 +592,6 @@ def webhook():
                                         "👥 <b>چند نفره:</b> هر بازیکن با گوشی خودش وارد می‌شود\n"
                                         "📱 <b>تک گوشی:</b> همه روی یک گوشی بازی می‌کنند", keyboard)
             
-            # ================ پایان ثبت‌نام چندنفره ================
             elif data.startswith("finish_register:"):
                 game_code = data.split(":")[1]
                 conn = sqlite3.connect(DB_FILE)
@@ -586,12 +605,10 @@ def webhook():
                     start_game_round(game_code, chat_id)
                 conn.close()
             
-            # ================ حالت تک‌نفره - نمایش نفر بعدی ================
             elif data.startswith("single_next:"):
                 game_code = data.split(":")[1]
                 show_next_single_player(game_code, chat_id)
             
-            # ================ شروع رای‌گیری چندنفره ================
             elif data.startswith("start_voting:"):
                 parts = data.split(":")
                 game_code = parts[1]
@@ -604,7 +621,6 @@ def webhook():
                 conn.close()
                 
                 alive_players = get_alive_players(game_code)
-                
                 for player in alive_players:
                     player_id, player_user_id, player_name, role = player
                     vote_buttons = []
@@ -622,7 +638,6 @@ def webhook():
                 }
                 send_message(chat_id, "🗳️ رای‌گیری شروع شد!\n\nهمه می‌تونن به یک نفر رای بدن.\nبعد از اینکه همه رای دادن، روی دکمه پایان رای‌گیری کلیک کن.", keyboard)
             
-            # ================ دریافت رای ================
             elif data.startswith("vote:"):
                 parts = data.split(":")
                 round_id = int(parts[1])
@@ -631,7 +646,6 @@ def webhook():
                 
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
-                
                 c.execute("SELECT is_round_active FROM games WHERE game_code = (SELECT game_code FROM rounds WHERE id = ?)", (round_id,))
                 is_active = c.fetchone()
                 if not is_active or is_active[0] == 0:
@@ -641,7 +655,6 @@ def webhook():
                 
                 c.execute("SELECT id FROM votes WHERE round_id = ? AND voter_id = ?", (round_id, voter_id))
                 existing = c.fetchone()
-                
                 if existing:
                     c.execute("UPDATE votes SET target_id = ?, voted_at = ? WHERE id = ?",
                               (target_id, datetime.now().isoformat(), existing[0]))
@@ -653,14 +666,12 @@ def webhook():
                 conn.close()
                 send_message(chat_id, "✅ رای شما ثبت شد!")
             
-            # ================ پایان رای‌گیری ================
             elif data.startswith("finish_voting:") or data.startswith("finish_tie_voting:"):
                 parts = data.split(":")
                 game_code = parts[1]
                 round_id = int(parts[2])
                 finish_voting_round(game_code, round_id, chat_id)
             
-            # ================ دور جدید ================
             elif data.startswith("new_round:"):
                 game_code = data.split(":")[1]
                 conn = sqlite3.connect(DB_FILE)
@@ -682,6 +693,7 @@ def webhook():
         chat_id = msg["chat"]["id"]
         user_id = msg["from"]["id"]
         text = msg.get("text", "").strip()
+        
         # ================ شروع ربات ================
         if text == "/start":
             keyboard = {
@@ -691,13 +703,10 @@ def webhook():
             }
             send_message(chat_id, "🕵️‍♂️ <b>به ربات جاسوس پیشرفته خوش اومدی!</b>\n\nیه بازی گروهی جذاب برای کشف جاسوس بین دوستان.", keyboard)
             return jsonify({"ok": True})
-        
-        # ================ حالت تک‌نفره - دریافت تعداد بازیکنان و اسامی ================
-        # بررسی اینکه کاربر در حال ثبت‌نام تک‌نفره است
+            # ================ حالت تک‌نفره - دریافت تعداد بازیکنان و اسامی ================
         is_single_mode = False
         game_code = None
         
-        # پیدا کردن بازی تک‌نفره فعال برای این کاربر
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT game_code FROM games WHERE admin_id = ? AND game_mode = 'single' AND status = 'registering'", (user_id,))
@@ -709,11 +718,9 @@ def webhook():
             is_single_mode = True
         
         if is_single_mode and game_code:
-            # بررسی اینکه در مرحله دریافت تعداد هستیم یا اسامی
             if game_code in pending_single_player_names:
                 data = pending_single_player_names[game_code]
                 
-                # مرحله دریافت تعداد بازیکنان
                 if data.get('step') == 'awaiting_count':
                     try:
                         count = int(text)
@@ -733,18 +740,13 @@ def webhook():
                         send_message(chat_id, "❌ لطفاً یک عدد معتبر وارد کنید (۳ تا ۲۰).")
                     return jsonify({"ok": True})
                 
-                # مرحله دریافت اسامی
                 elif data.get('step') == 'collecting_names':
-                    # پردازش اسامی (تقسیم بر اساس خط جدید یا هر پیام جدا)
                     names_to_add = []
                     if '\n' in text:
-                        # چند اسم در یک پیام
                         names_to_add = [name.strip() for name in text.split('\n') if name.strip()]
                     else:
-                        # یک اسم در یک پیام
                         names_to_add = [text.strip()]
                     
-                    # اعتبارسنجی اسامی
                     valid_names = []
                     for name in names_to_add:
                         if len(name) >= 2:
@@ -753,31 +755,26 @@ def webhook():
                             send_message(chat_id, f"❌ اسم «{name}» کمتر از ۲ کاراکتر است. لطفاً دوباره تلاش کن.")
                             return jsonify({"ok": True})
                     
-                    # اضافه کردن اسامی معتبر
                     data['names'].extend(valid_names)
                     current_count = len(data['names'])
                     total_count = data['count']
                     
                     if current_count >= total_count:
-                        # همه اسامی جمع شد - ثبت در دیتابیس
                         conn = sqlite3.connect(DB_FILE)
                         c = conn.cursor()
-                        
                         for name in data['names'][:total_count]:
                             c.execute("""
                                 INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
                                 VALUES (?, ?, ?, 'citizen', 1, 0, ?)
                             """, (game_code, user_id, name, datetime.now().isoformat()))
-                        
                         conn.commit()
                         conn.close()
                         
-                        # حذف از pending
                         del pending_single_player_names[game_code]
                         
                         send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + 
                                      "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'][:total_count])]) + 
-                                     "\n\nدر حال شروع بازی...")
+                                     "\n\n🔄 در حال شروع بازی...")
                         
                         start_game_round(game_code, chat_id)
                     else:
@@ -786,10 +783,8 @@ def webhook():
                         send_message(chat_id, f"✅ {current_count} اسم ثبت شد.\n\n"
                                              f"لطفاً {remaining} اسم دیگر را ارسال کنید.\n"
                                              f"(می‌توانید چند اسم را در یک پیام با خط جدید ارسال کنید)")
-                    
                     return jsonify({"ok": True})
             else:
-                # مرحله اول - دریافت تعداد بازیکنان
                 try:
                     count = int(text)
                     if 3 <= count <= 20:
@@ -980,7 +975,6 @@ def finish_voting_round(game_code, round_id, chat_id):
             send_message(chat_id, "🎯 این دور به پایان رسید. برای شروع دور جدید روی دکمه زیر کلیک کن.", keyboard)
     
     else:
-        # تساوی بین چند نفر
         names = []
         tied_player_ids = []
         for target_id in top_candidates:
