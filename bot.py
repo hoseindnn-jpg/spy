@@ -261,17 +261,27 @@ def get_game_word_pair(game_code):
         conn.close()
 # ================ توزیع نقش و کلمه ================
 def assign_roles(game_code):
+    """توزیع نقش‌ها بین بازیکنان زنده"""
     conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
     try:
+        # دریافت لیست بازیکنان زنده
         c.execute("SELECT id FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
         players = c.fetchall()
         player_ids = [p[0] for p in players]
         total = len(player_ids)
         
-        if total < 3 or total > 20:
+        print(f"🔍 تعداد بازیکنان برای توزیع نقش: {total}")  # برای دیباگ
+        
+        if total < 3:
+            print(f"❌ تعداد بازیکنان ({total}) کمتر از حداقل (۳) است!")
             return None
         
+        if total > 20:
+            print(f"❌ تعداد بازیکنان ({total}) بیشتر از حداکثر (۲۰) است!")
+            return None
+        
+        # جدول ترکیب نقش‌ها
         role_mapping = {
             3: {'spy': 0, 'misled': 1, 'citizen': 2},
             4: {'spy': 0, 'misled': 1, 'citizen': 3},
@@ -295,22 +305,34 @@ def assign_roles(game_code):
         
         roles_config = role_mapping.get(total)
         if not roles_config:
+            print(f"❌ ترکیب نقش برای {total} نفر یافت نشد!")
             return None
         
         spy_count = roles_config['spy']
         misled_count = roles_config['misled']
         citizen_count = roles_config['citizen']
         
+        print(f"✅ نقش‌ها: شهروند={citizen_count}, گمراه={misled_count}, جاسوس={spy_count}")
+        
+        # ایجاد لیست نقش‌ها
         roles = ['citizen'] * citizen_count + ['misled'] * misled_count + ['spy'] * spy_count
         random.shuffle(roles)
         
+        # اختصاص نقش به بازیکنان
         for player_id, role in zip(player_ids, roles):
             c.execute("UPDATE players SET role = ? WHERE id = ?", (role, player_id))
         
         conn.commit()
+        
+        # تایید نهایی
+        c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1 AND role IS NOT NULL", (game_code,))
+        assigned_count = c.fetchone()[0]
+        print(f"✅ {assigned_count} نقش با موفقیت توزیع شد.")
+        
         return {'citizen': citizen_count, 'misled': misled_count, 'spy': spy_count}
+    
     except Exception as e:
-        print(f"Error in assign_roles: {e}")
+        print(f"❌ خطا در توزیع نقش‌ها: {e}")
         return None
     finally:
         conn.close()
@@ -881,30 +903,40 @@ def webhook():
                     current_count = len(data['names'])
                     total_count = data['count']
                     
-                    if current_count >= total_count:
-                        conn = sqlite3.connect(DB_FILE, timeout=10)
-                        c = conn.cursor()
-                        try:
-                            for name in data['names'][:total_count]:
-                                c.execute("""
-                                    INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
-                                    VALUES (?, ?, ?, 'citizen', 1, 0, ?)
-                                """, (game_code, user_id, name, datetime.now().isoformat()))
-                            conn.commit()
-                        except Exception as e:
-                            send_message(chat_id, f"❌ خطا در ذخیره اسامی: {str(e)}")
-                            return jsonify({"ok": True})
-                        finally:
-                            conn.close()
-                        
-                        del pending_single_player_names[game_code]
-                        
-                        send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + 
-                                     "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'][:total_count])]) + 
-                                     "\n\n🔄 در حال شروع بازی...")
-                        
-                        time.sleep(0.5)
-                        start_game_round(game_code, chat_id)
+                   if current_count >= total_count:
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    c = conn.cursor()
+    try:
+        # ثبت اسامی در دیتابیس
+        for name in data['names'][:total_count]:
+            c.execute("""
+                INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
+                VALUES (?, ?, ?, 'citizen', 1, 0, ?)
+            """, (game_code, user_id, name, datetime.now().isoformat()))
+        conn.commit()
+        
+        # بررسی تعداد بازیکنان ثبت‌شده
+        c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
+        registered_count = c.fetchone()[0]
+        print(f"✅ {registered_count} بازیکن در دیتابیس ثبت شد.")
+        
+    except Exception as e:
+        send_message(chat_id, f"❌ خطا در ذخیره اسامی: {str(e)}")
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+    
+    del pending_single_player_names[game_code]
+    
+    send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + 
+                 "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'][:total_count])]) + 
+                 "\n\n🔄 در حال شروع بازی...")
+    
+    # تاخیر کوتاه برای اطمینان از ثبت کامل در دیتابیس
+    time.sleep(1)
+    
+    # شروع بازی
+    start_game_round(game_code, chat_id)
                     else:
                         remaining = total_count - current_count
                         pending_single_player_names[game_code] = data
