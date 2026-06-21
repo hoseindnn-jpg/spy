@@ -353,7 +353,9 @@ def start_game_round(game_code, chat_id):
         c.execute("SELECT id, user_id, display_name, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
         players = c.fetchall()
         conn.close()
-        
+        if not players:
+        send_message(chat_id, "❌ هیچ بازیکنی ثبت نشده است!")
+        return
         # ذخیره لیست بازیکنان برای نمایش متوالی
         pending_single_player_names[game_code] = {
             'players': players,
@@ -399,18 +401,29 @@ def show_next_single_player(game_code, chat_id):
     """نمایش نقش بازیکن بعدی در حالت تک‌نفره"""
     data = pending_single_player_names.get(game_code)
     if not data:
+        send_message(chat_id, "❌ خطا: اطلاعات بازی یافت نشد! لطفاً بازی را مجدداً شروع کنید.")
         return
     
-    players = data['players']
-    current_index = data['current_index']
-    round_number = data['round_number']
+    players = data.get('players', [])
+    current_index = data.get('current_index', 0)
+    round_number = data.get('round_number', 0)
+    
+    if not players:
+        send_message(chat_id, "❌ خطا: لیست بازیکنان خالی است!")
+        return
     
     if current_index >= len(players):
         send_message(chat_id, "✅ همه نقش‌ها نمایش داده شدند!\n\nاکنون می‌توانید رای‌گیری حضوری را شروع کنید.")
+        # حذف از pending
+        del pending_single_player_names[game_code]
         return
     
     player_id, player_user_id, display_name, role = players[current_index]
     word_pair_id = get_word_pair_id_for_game(game_code)
+    
+    if not word_pair_id:
+        send_message(chat_id, f"❌ خطا: کلمه‌ای برای بازی یافت نشد! لطفاً کلمات را به دیتابیس اضافه کنید.")
+        return
     
     if role == 'spy':
         word = "🕵️‍♂️ شما جاسوس هستید! (کلمه‌ای نمی‌بینید)"
