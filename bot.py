@@ -39,66 +39,13 @@ def is_user_member_of_channel(user_id, channel_username):
         return False
 
 # ================ دیتابیس ================
-def load_words_from_json():
-    """بارگذاری کلمات از فایل JSON به دیتابیس"""
-    conn = sqlite3.connect(DB_FILE, timeout=10)
-    c = conn.cursor()
-    try:
-        import json
-        with open('words.json', 'r', encoding='utf-8') as f:
-            words = json.load(f)
-        for word_pair in words:
-            c.execute("INSERT OR IGNORE INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)",
-                      (word_pair['word1'], word_pair['word2'], 'general'))
-        conn.commit()
-        print(f"✅ {len(words)} جفت‌کلمه از فایل JSON به دیتابیس اضافه شد!")
-    except FileNotFoundError:
-        print("⚠️ فایل words.json پیدا نشد! لطفاً فایل رو به پروژه اضافه کن.")
-    except Exception as e:
-        print(f"❌ خطا در بارگذاری کلمات: {e}")
-    finally:
-        conn.close()
-
-def add_default_word_pairs():
-    """اضافه کردن جفت‌کلمه‌های پیش‌فرض به دیتابیس"""
-    default_pairs = [
-        ("سینما", "تئاتر"), ("مدرسه", "دانشگاه"), ("رستوران", "کافه"),
-        ("کتاب", "مجله"), ("دریا", "اقیانوس"), ("کوه", "تپه"),
-        ("ماشین", "موتور"), ("گربه", "سگ"), ("پیتزا", "ساندویچ"),
-        ("شیرینی", "کیک"), ("باغ", "جنگل"), ("شهر", "روستا"),
-        ("هواپیما", "هلیکوپتر"), ("قطار", "اتوبوس"), ("کفش", "چکمه"),
-        ("کلاه", "عینک"), ("شب", "روز"), ("تابستان", "زمستان"),
-        ("عشق", "دوستی"), ("انرژی", "قدرت"), ("پارک", "باغ وحش"),
-        ("آشپزخانه", "رستوران"), ("ماهی", "پرنده"), ("صندلی", "میز"),
-        ("تلفن", "تبلت"), ("لباس", "کت"), ("برف", "باران"),
-        ("آفتاب", "ماه"), ("تخت", "مبل"), ("چای", "قهوه"),
-        ("نان", "کیک"), ("لبخند", "خنده"), ("گریه", "ناراحتی"),
-        ("سفر", "مهاجرت"), ("خرید", "فروش"), ("مهمانی", "جشن"),
-        ("عروسی", "نامزدی"), ("بیمارستان", "درمانگاه"), ("پزشک", "پرستار"),
-        ("معلم", "استاد"), ("دانشجو", "دانش‌آموز"), ("چراغ", "لامپ"),
-        ("فرش", "موکت"), ("تخم‌مرغ", "مرغ"), ("شیر", "ماست"),
-        ("نانوایی", "سوپرمارکت"), ("باشگاه", "سالن ورزشی"), ("قلم", "مداد"),
-        ("کیف", "کوله‌پشتی"), ("کودک", "نوجوان")
-    ]
-    
-    conn = sqlite3.connect(DB_FILE, timeout=10)
-    c = conn.cursor()
-    try:
-        for word1, word2 in default_pairs:
-            c.execute("INSERT OR IGNORE INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)",
-                      (word1, word2, 'general'))
-        conn.commit()
-        print(f"✅ {len(default_pairs)} جفت‌کلمه پیش‌فرض به دیتابیس اضافه شد!")
-    except Exception as e:
-        print(f"❌ خطا در افزودن کلمات پیش‌فرض: {e}")
-    finally:
-        conn.close()
-
 def init_db():
+    """ایجاد جداول دیتابیس و افزودن کلمات پیش‌فرض"""
     conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
     
     try:
+        # ایجاد جداول
         c.execute('''CREATE TABLE IF NOT EXISTS games (
                         game_code TEXT PRIMARY KEY,
                         admin_id INTEGER,
@@ -154,13 +101,43 @@ def init_db():
                      )''')
         
         conn.commit()
+        print("✅ جداول دیتابیس با موفقیت ایجاد شدند.")
+        
+        # ================ افزودن کلمات پیش‌فرض ================
+        default_pairs = [
+            ("سینما", "تئاتر"), ("مدرسه", "دانشگاه"), ("رستوران", "کافه"),
+            ("کتاب", "مجله"), ("دریا", "اقیانوس"), ("کوه", "تپه"),
+            ("ماشین", "موتور"), ("گربه", "سگ"), ("پیتزا", "ساندویچ"),
+            ("شیرینی", "کیک"), ("باغ", "جنگل"), ("شهر", "روستا"),
+            ("هواپیما", "هلیکوپتر"), ("قطار", "اتوبوس"), ("کفش", "چکمه"),
+            ("کلاه", "عینک"), ("شب", "روز"), ("تابستان", "زمستان"),
+            ("عشق", "دوستی"), ("انرژی", "قدرت"), ("پارک", "باغ وحش"),
+            ("آشپزخانه", "رستوران"), ("ماهی", "پرنده"), ("صندلی", "میز"),
+            ("تلفن", "تبلت"), ("لباس", "کت"), ("برف", "باران"),
+            ("آفتاب", "ماه"), ("تخت", "مبل"), ("چای", "قهوه"),
+            ("نان", "کیک"), ("لبخند", "خنده"), ("گریه", "ناراحتی"),
+            ("سفر", "مهاجرت"), ("خرید", "فروش"), ("مهمانی", "جشن"),
+            ("عروسی", "نامزدی"), ("بیمارستان", "درمانگاه"), ("پزشک", "پرستار"),
+            ("معلم", "استاد"), ("دانشجو", "دانش‌آموز"), ("چراغ", "لامپ"),
+            ("فرش", "موکت"), ("تخم‌مرغ", "مرغ"), ("شیر", "ماست"),
+            ("نانوایی", "سوپرمارکت"), ("باشگاه", "سالن ورزشی"), ("قلم", "مداد"),
+            ("کیف", "کوله‌پشتی"), ("کودک", "نوجوان"), ("پلیس", "دزد"),
+            ("دکتر", "بیمار"), ("آشپز", "گارسون"), ("مهندس", "معمار"),
+            ("خلبان", "مهماندار"), ("غواص", "کشتی‌گیر"), ("کشاورز", "دامدار")
+        ]
+        
+        # افزودن کلمات به دیتابیس (در صورت عدم وجود)
+        for word1, word2 in default_pairs:
+            c.execute("INSERT OR IGNORE INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)",
+                      (word1, word2, 'general'))
+        
+        conn.commit()
+        print(f"✅ {len(default_pairs)} جفت‌کلمه پیش‌فرض به دیتابیس اضافه شد.")
+        
     except Exception as e:
         print(f"❌ خطا در ایجاد دیتابیس: {e}")
     finally:
         conn.close()
-    
-    add_default_word_pairs()
-    load_words_from_json()
 
 init_db()
 
@@ -265,13 +242,12 @@ def assign_roles(game_code):
     conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
     try:
-        # دریافت لیست بازیکنان زنده
         c.execute("SELECT id FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
         players = c.fetchall()
         player_ids = [p[0] for p in players]
         total = len(player_ids)
         
-        print(f"🔍 تعداد بازیکنان برای توزیع نقش: {total}")  # برای دیباگ
+        print(f"🔍 تعداد بازیکنان برای توزیع نقش: {total}")
         
         if total < 3:
             print(f"❌ تعداد بازیکنان ({total}) کمتر از حداقل (۳) است!")
@@ -281,7 +257,6 @@ def assign_roles(game_code):
             print(f"❌ تعداد بازیکنان ({total}) بیشتر از حداکثر (۲۰) است!")
             return None
         
-        # جدول ترکیب نقش‌ها
         role_mapping = {
             3: {'spy': 0, 'misled': 1, 'citizen': 2},
             4: {'spy': 0, 'misled': 1, 'citizen': 3},
@@ -314,17 +289,14 @@ def assign_roles(game_code):
         
         print(f"✅ نقش‌ها: شهروند={citizen_count}, گمراه={misled_count}, جاسوس={spy_count}")
         
-        # ایجاد لیست نقش‌ها
         roles = ['citizen'] * citizen_count + ['misled'] * misled_count + ['spy'] * spy_count
         random.shuffle(roles)
         
-        # اختصاص نقش به بازیکنان
         for player_id, role in zip(player_ids, roles):
             c.execute("UPDATE players SET role = ? WHERE id = ?", (role, player_id))
         
         conn.commit()
         
-        # تایید نهایی
         c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1 AND role IS NOT NULL", (game_code,))
         assigned_count = c.fetchone()[0]
         print(f"✅ {assigned_count} نقش با موفقیت توزیع شد.")
@@ -338,11 +310,16 @@ def assign_roles(game_code):
         conn.close()
 
 def get_word_pair():
+    """دریافت یک جفت کلمه استفاده نشده"""
     conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
     try:
         c.execute("SELECT id, word1, word2, category FROM word_pairs ORDER BY used_count ASC, RANDOM() LIMIT 1")
         pair = c.fetchone()
+        if pair:
+            print(f"✅ کلمه انتخاب شد: {pair[1]} - {pair[2]}")
+        else:
+            print("❌ هیچ کلمه‌ای در دیتابیس وجود ندارد!")
         return pair
     except Exception as e:
         print(f"Error in get_word_pair: {e}")
@@ -389,6 +366,7 @@ def start_new_game(chat_id, admin_id, game_mode='multi'):
         c.execute("INSERT INTO games (game_code, admin_id, status, created_at, is_round_active, game_mode) VALUES (?, ?, 'registering', ?, 0, ?)",
                   (game_code, admin_id, datetime.now().isoformat(), game_mode))
         conn.commit()
+        print(f"✅ بازی جدید با کد {game_code} ایجاد شد.")
     except Exception as e:
         send_message(chat_id, f"❌ خطا در ایجاد بازی: {str(e)}")
         return
@@ -418,6 +396,7 @@ def start_new_game(chat_id, admin_id, game_mode='multi'):
                     keyboard)
 
 def start_game_round(game_code, chat_id):
+    """شروع یک دور جدید از بازی"""
     try:
         conn = sqlite3.connect(DB_FILE, timeout=10)
         c = conn.cursor()
@@ -428,20 +407,25 @@ def start_game_round(game_code, chat_id):
         # مرحله 2: شمارش بازیکنان زنده
         c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
         count = c.fetchone()[0]
+        print(f"🔍 تعداد بازیکنان زنده: {count}")
         
         if count < 3:
             send_message(chat_id, f"⚠️ تعداد بازیکنان زنده ({count}) کافی نیست!\n\nحداقل ۳ نفر برای شروع دور لازمه.")
             conn.close()
             return
         
-        # مرحله 3: توزیع نقش‌ها
+        # مرحله 3: تنظیم نقش پیش‌فرض برای بازیکنانی که نقش ندارند
+        c.execute("UPDATE players SET role = 'citizen' WHERE game_code = ? AND is_alive = 1 AND role IS NULL", (game_code,))
+        conn.commit()
+        
+        # مرحله 4: توزیع نقش‌ها
         role_counts = assign_roles(game_code)
         if not role_counts:
             send_message(chat_id, "❌ خطا در توزیع نقش‌ها!")
             conn.close()
             return
         
-        # مرحله 4: انتخاب جفت کلمه
+        # مرحله 5: انتخاب جفت کلمه
         word_pair = get_word_pair()
         if not word_pair:
             send_message(chat_id, "❌ هیچ جفت کلمه‌ای در دیتابیس وجود نداره! لطفاً ابتدا کلمات رو اضافه کن.")
@@ -450,7 +434,7 @@ def start_game_round(game_code, chat_id):
         
         word_pair_id, word1, word2, category = word_pair
         
-        # مرحله 5: ثبت دور جدید
+        # مرحله 6: ثبت دور جدید
         c.execute("UPDATE games SET status = 'playing', round_number = round_number + 1, is_round_active = 0, word_pair_id = ? WHERE game_code = ?",
                   (word_pair_id, game_code))
         c.execute("SELECT round_number FROM games WHERE game_code = ?", (game_code,))
@@ -463,7 +447,7 @@ def start_game_round(game_code, chat_id):
         c.execute("UPDATE word_pairs SET used_count = used_count + 1 WHERE id = ?", (word_pair_id,))
         conn.commit()
         
-        # مرحله 6: دریافت حالت بازی
+        # مرحله 7: دریافت حالت بازی
         game_mode = get_game_mode(game_code)
         
         if game_mode == 'single':
@@ -903,40 +887,34 @@ def webhook():
                     current_count = len(data['names'])
                     total_count = data['count']
                     
-                   if current_count >= total_count:
-    conn = sqlite3.connect(DB_FILE, timeout=10)
-    c = conn.cursor()
-    try:
-        # ثبت اسامی در دیتابیس
-        for name in data['names'][:total_count]:
-            c.execute("""
-                INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
-                VALUES (?, ?, ?, 'citizen', 1, 0, ?)
-            """, (game_code, user_id, name, datetime.now().isoformat()))
-        conn.commit()
-        
-        # بررسی تعداد بازیکنان ثبت‌شده
-        c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
-        registered_count = c.fetchone()[0]
-        print(f"✅ {registered_count} بازیکن در دیتابیس ثبت شد.")
-        
-    except Exception as e:
-        send_message(chat_id, f"❌ خطا در ذخیره اسامی: {str(e)}")
-        return jsonify({"ok": True})
-    finally:
-        conn.close()
-    
-    del pending_single_player_names[game_code]
-    
-    send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + 
-                 "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'][:total_count])]) + 
-                 "\n\n🔄 در حال شروع بازی...")
-    
-    # تاخیر کوتاه برای اطمینان از ثبت کامل در دیتابیس
-    time.sleep(1)
-    
-    # شروع بازی
-    start_game_round(game_code, chat_id)
+                    if current_count >= total_count:
+                        conn = sqlite3.connect(DB_FILE, timeout=10)
+                        c = conn.cursor()
+                        try:
+                            for name in data['names'][:total_count]:
+                                c.execute("""
+                                    INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
+                                    VALUES (?, ?, ?, 'citizen', 1, 0, ?)
+                                """, (game_code, user_id, name, datetime.now().isoformat()))
+                            conn.commit()
+                            
+                            c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
+                            registered_count = c.fetchone()[0]
+                            print(f"✅ {registered_count} بازیکن در دیتابیس ثبت شد.")
+                        except Exception as e:
+                            send_message(chat_id, f"❌ خطا در ذخیره اسامی: {str(e)}")
+                            return jsonify({"ok": True})
+                        finally:
+                            conn.close()
+                        
+                        del pending_single_player_names[game_code]
+                        
+                        send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + 
+                                     "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'][:total_count])]) + 
+                                     "\n\n🔄 در حال شروع بازی...")
+                        
+                        time.sleep(1)
+                        start_game_round(game_code, chat_id)
                     else:
                         remaining = total_count - current_count
                         pending_single_player_names[game_code] = data
