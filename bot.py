@@ -336,92 +336,108 @@ def start_new_game(chat_id, admin_id, game_mode='multi'):
                     keyboard)
 
 def start_game_round(game_code, chat_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    c.execute("DELETE FROM votes WHERE round_id IN (SELECT id FROM rounds WHERE game_code = ?)", (game_code,))
-    c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
-    count = c.fetchone()[0]
-    
-    if count < 3:
-        send_message(chat_id, f"⚠️ تعداد بازیکنان زنده ({count}) کافی نیست!\n\nحداقل ۳ نفر برای شروع دور لازمه.")
-        conn.close()
-        return
-    
-    role_counts = assign_roles(game_code)
-    if not role_counts:
-        conn.close()
-        return
-    
-    word_pair = get_word_pair()
-    if not word_pair:
-        send_message(chat_id, "❌ هیچ جفت کلمه‌ای در دیتابیس وجود نداره! لطفاً ابتدا کلمات رو اضافه کن.")
-        conn.close()
-        return
-    
-    word_pair_id, word1, word2, category = word_pair
-    
-    c.execute("UPDATE games SET status = 'playing', round_number = round_number + 1, is_round_active = 0, word_pair_id = ? WHERE game_code = ?",
-              (word_pair_id, game_code))
-    c.execute("SELECT round_number FROM games WHERE game_code = ?", (game_code,))
-    round_number = c.fetchone()[0]
-    
-    c.execute("INSERT INTO rounds (game_code, round_number, word_pair_id, status, started_at) VALUES (?, ?, ?, 'speaking', ?)",
-              (game_code, round_number, word_pair_id, datetime.now().isoformat()))
-    round_id = c.lastrowid
-    
-    c.execute("UPDATE word_pairs SET used_count = used_count + 1 WHERE id = ?", (word_pair_id,))
-    conn.commit()
-    
-    game_mode = get_game_mode(game_code)
-    
-    if game_mode == 'single':
-        c.execute("SELECT id, user_id, display_name, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
-        players = c.fetchall()
-        conn.close()
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
         
-        if not players:
-            send_message(chat_id, "❌ هیچ بازیکنی ثبت نشده است!")
+        # مرحله 1: پاک کردن آرای قبلی
+        c.execute("DELETE FROM votes WHERE round_id IN (SELECT id FROM rounds WHERE game_code = ?)", (game_code,))
+        
+        # مرحله 2: شمارش بازیکنان زنده
+        c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
+        count = c.fetchone()[0]
+        
+        if count < 3:
+            send_message(chat_id, f"⚠️ تعداد بازیکنان زنده ({count}) کافی نیست!\n\nحداقل ۳ نفر برای شروع دور لازمه.")
+            conn.close()
             return
         
-        pending_single_player_names[game_code] = {
-            'players': players,
-            'current_index': 0,
-            'round_id': round_id,
-            'round_number': round_number
-        }
+        # مرحله 3: توزیع نقش‌ها
+        role_counts = assign_roles(game_code)
+        if not role_counts:
+            send_message(chat_id, "❌ خطا در توزیع نقش‌ها!")
+            conn.close()
+            return
         
-        show_next_single_player(game_code, chat_id)
+        # مرحله 4: انتخاب جفت کلمه
+        word_pair = get_word_pair()
+        if not word_pair:
+            send_message(chat_id, "❌ هیچ جفت کلمه‌ای در دیتابیس وجود نداره! لطفاً ابتدا کلمات رو اضافه کن.")
+            conn.close()
+            return
         
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "🔄 نفر بعدی", "callback_data": f"single_next:{game_code}"}]
-            ]
-        }
-        send_message(chat_id, "👤 برای مشاهده نقش هر بازیکن، دکمه «نفر بعدی» را بزنید.", keyboard)
+        word_pair_id, word1, word2, category = word_pair
         
-    else:
-        c.execute("SELECT id, user_id, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
-        players = c.fetchall()
+        # مرحله 5: ثبت دور جدید
+        c.execute("UPDATE games SET status = 'playing', round_number = round_number + 1, is_round_active = 0, word_pair_id = ? WHERE game_code = ?",
+                  (word_pair_id, game_code))
+        c.execute("SELECT round_number FROM games WHERE game_code = ?", (game_code,))
+        round_number = c.fetchone()[0]
         
-        for player_id, player_user_id, role in players:
-            if role == 'spy':
-                word_to_send = "🕵️‍♂️ شما <b>جاسوس</b> هستید!\n\nشما کلمه‌ای نمی‌بینید. سعی کن با دقت به حرف‌های بقیه، کلمه رو حدس بزنی!"
-            else:
-                word = get_word_for_role(word_pair_id, role)
-                word_to_send = f"🔍 کلمه‌ی شما: <b>{word}</b>"
+        c.execute("INSERT INTO rounds (game_code, round_number, word_pair_id, status, started_at) VALUES (?, ?, ?, 'speaking', ?)",
+                  (game_code, round_number, word_pair_id, datetime.now().isoformat()))
+        round_id = c.lastrowid
+        
+        c.execute("UPDATE word_pairs SET used_count = used_count + 1 WHERE id = ?", (word_pair_id,))
+        conn.commit()
+        
+        # مرحله 6: دریافت حالت بازی
+        game_mode = get_game_mode(game_code)
+        
+        if game_mode == 'single':
+            # حالت تک‌نفره - نمایش نقش‌ها به صورت متوالی
+            c.execute("SELECT id, user_id, display_name, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
+            players = c.fetchall()
+            conn.close()
             
-            send_message(player_user_id, f"🎮 <b>دور {round_number} شروع شد!</b>\n\n{word_to_send}\n\nهر نفر به ترتیب یک کلمه مرتبط بگه.")
-        
-        conn.close()
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "🗳️ شروع رای‌گیری", "callback_data": f"start_voting:{game_code}:{round_id}"}]
-            ]
-        }
-        send_message(chat_id, f"✅ دور {round_number} شروع شد! {count} نفر در بازی هستن.\n\n📊 تعداد نقش‌ها (فقط برای مدیر):\n• شهروندان: {role_counts['citizen']}\n• گمراهان: {role_counts['misled']}\n• جاسوس‌ها: {role_counts['spy']}\n\nکلمات به همه ارسال شد. بعد از اینکه همه صحبت کردن، رای‌گیری رو شروع کن.", keyboard)
-
+            if not players:
+                send_message(chat_id, "❌ هیچ بازیکنی ثبت نشده است!")
+                return
+            
+            # ذخیره لیست بازیکنان برای نمایش متوالی
+            pending_single_player_names[game_code] = {
+                'players': players,
+                'current_index': 0,
+                'round_id': round_id,
+                'round_number': round_number
+            }
+            
+            # نمایش اولین بازیکن
+            show_next_single_player(game_code, chat_id)
+            
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "🔄 نفر بعدی", "callback_data": f"single_next:{game_code}"}]
+                ]
+            }
+            send_message(chat_id, "👤 برای مشاهده نقش هر بازیکن، دکمه «نفر بعدی» را بزنید.", keyboard)
+            
+        else:
+            # حالت چندنفره - ارسال کلمات به بازیکنان
+            c.execute("SELECT id, user_id, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
+            players = c.fetchall()
+            
+            for player_id, player_user_id, role in players:
+                if role == 'spy':
+                    word_to_send = "🕵️‍♂️ شما <b>جاسوس</b> هستید!\n\nشما کلمه‌ای نمی‌بینید. سعی کن با دقت به حرف‌های بقیه، کلمه رو حدس بزنی!"
+                else:
+                    word = get_word_for_role(word_pair_id, role)
+                    word_to_send = f"🔍 کلمه‌ی شما: <b>{word}</b>"
+                
+                send_message(player_user_id, f"🎮 <b>دور {round_number} شروع شد!</b>\n\n{word_to_send}\n\nهر نفر به ترتیب یک کلمه مرتبط بگه.")
+            
+            conn.close()
+            
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "🗳️ شروع رای‌گیری", "callback_data": f"start_voting:{game_code}:{round_id}"}]
+                ]
+            }
+            send_message(chat_id, f"✅ دور {round_number} شروع شد! {count} نفر در بازی هستن.\n\n📊 تعداد نقش‌ها (فقط برای مدیر):\n• شهروندان: {role_counts['citizen']}\n• گمراهان: {role_counts['misled']}\n• جاسوس‌ها: {role_counts['spy']}\n\nکلمات به همه ارسال شد. بعد از اینکه همه صحبت کردن، رای‌گیری رو شروع کن.", keyboard)
+    
+    except Exception as e:
+        send_message(chat_id, f"❌ خطا در شروع بازی: {str(e)}\n\nلطفاً با پشتیبانی تماس بگیرید.")
+        print(f"Error in start_game_round: {e}")
 def show_next_single_player(game_code, chat_id):
     """نمایش نقش بازیکن بعدی در حالت تک‌نفره"""
     data = pending_single_player_names.get(game_code)
@@ -775,7 +791,9 @@ def webhook():
                         send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + 
                                      "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'][:total_count])]) + 
                                      "\n\n🔄 در حال شروع بازی...")
-                        
+                        import time
+                        time.sleep(0.5)
+
                         start_game_round(game_code, chat_id)
                     else:
                         remaining = total_count - current_count
