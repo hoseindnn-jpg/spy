@@ -70,7 +70,7 @@ def init_db():
                     round_number INTEGER DEFAULT 0,
                     is_round_active INTEGER DEFAULT 0,
                     word_pair_id INTEGER,
-                    game_mode TEXT DEFAULT 'multi'  -- 'multi' یا 'single'
+                    game_mode TEXT DEFAULT 'multi'
                  )''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS players (
@@ -284,20 +284,10 @@ def start_new_game(chat_id, admin_id, game_mode='multi'):
     
     if game_mode == 'single':
         # حالت تک‌نفره - درخواست تعداد بازیکنان
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "3 نفر", "callback_data": f"single_player_count:{game_code}:3"}],
-                [{"text": "4 نفر", "callback_data": f"single_player_count:{game_code}:4"}],
-                [{"text": "5 نفر", "callback_data": f"single_player_count:{game_code}:5"}],
-                [{"text": "6 نفر", "callback_data": f"single_player_count:{game_code}:6"}],
-                [{"text": "7 نفر", "callback_data": f"single_player_count:{game_code}:7"}],
-                [{"text": "8 نفر", "callback_data": f"single_player_count:{game_code}:8"}]
-            ]
-        }
         send_message(chat_id, 
-                    "🎮 بازی جاسوس (حالت تک‌نفره) ساخته شد!\n\n"
-                    "📋 کد بازی: <code>{game_code}</code>\n\n"
-                    "تعداد بازیکنان را انتخاب کنید:", keyboard)
+                    f"🎮 بازی جاسوس (حالت تک‌نفره) ساخته شد!\n\n"
+                    f"📋 کد بازی: <code>{game_code}</code>\n\n"
+                    f"تعداد بازیکنان را وارد کنید (۳ تا ۲۰):")
     else:
         # حالت چندنفره - لینک ثبت‌نام
         bot_info = requests.get(f"{BASE_URL}/getMe").json()
@@ -569,24 +559,6 @@ def webhook():
                                         "👥 <b>چند نفره:</b> هر بازیکن با گوشی خودش وارد می‌شود\n"
                                         "📱 <b>تک گوشی:</b> همه روی یک گوشی بازی می‌کنند", keyboard)
             
-            # ================ حالت تک‌نفره - تعداد بازیکنان ================
-            elif data.startswith("single_player_count:"):
-                parts = data.split(":")
-                game_code = parts[1]
-                player_count = int(parts[2])
-                
-                # ذخیره تعداد بازیکنان و شروع دریافت اسامی
-                pending_single_player_names[game_code] = {
-                    'count': player_count,
-                    'names': [],
-                    'step': 'collecting_names'
-                }
-                
-                send_message(chat_id, f"👤 تعداد بازیکنان: {player_count} نفر\n\n"
-                                     f"لطفاً اسم بازیکن {1} را وارد کنید:\n"
-                                     f"(هر بار یک اسم را تایپ کرده و ارسال کنید)")
-                return jsonify({"ok": True})
-            
             # ================ پایان ثبت‌نام چندنفره ================
             elif data.startswith("finish_register:"):
                 game_code = data.split(":")[1]
@@ -697,9 +669,7 @@ def webhook():
         chat_id = msg["chat"]["id"]
         user_id = msg["from"]["id"]
         text = msg.get("text", "").strip()
-        # ================ ادامه هندل پیام‌های متنی ================
-        
-        # شروع ربات
+        # ================ شروع ربات ================
         if text == "/start":
             keyboard = {
                 "inline_keyboard": [
@@ -709,44 +679,120 @@ def webhook():
             send_message(chat_id, "🕵️‍♂️ <b>به ربات جاسوس پیشرفته خوش اومدی!</b>\n\nیه بازی گروهی جذاب برای کشف جاسوس بین دوستان.", keyboard)
             return jsonify({"ok": True})
         
-        # ================ حالت تک‌نفره - دریافت اسامی ================
-        if game_code in pending_single_player_names:
-            data = pending_single_player_names[game_code]
-            if data.get('step') == 'collecting_names':
-                # اعتبارسنجی اسم
-                if len(text.strip()) < 2:
-                    send_message(chat_id, "❌ اسم باید حداقل ۲ کاراکتر باشد. لطفاً دوباره تلاش کن.")
+        # ================ حالت تک‌نفره - دریافت تعداد بازیکنان و اسامی ================
+        # بررسی اینکه کاربر در حال ثبت‌نام تک‌نفره است
+        is_single_mode = False
+        game_code = None
+        
+        # پیدا کردن بازی تک‌نفره فعال برای این کاربر
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT game_code FROM games WHERE admin_id = ? AND game_mode = 'single' AND status = 'registering'", (user_id,))
+        single_game = c.fetchone()
+        conn.close()
+        
+        if single_game:
+            game_code = single_game[0]
+            is_single_mode = True
+        
+        if is_single_mode and game_code:
+            # بررسی اینکه در مرحله دریافت تعداد هستیم یا اسامی
+            if game_code in pending_single_player_names:
+                data = pending_single_player_names[game_code]
+                
+                # مرحله دریافت تعداد بازیکنان
+                if data.get('step') == 'awaiting_count':
+                    try:
+                        count = int(text)
+                        if 3 <= count <= 20:
+                            data['count'] = count
+                            data['names'] = []
+                            data['step'] = 'collecting_names'
+                            pending_single_player_names[game_code] = data
+                            
+                            send_message(chat_id, f"✅ تعداد بازیکنان: {count} نفر\n\n"
+                                                 f"لطفاً اسامی بازیکنان را ارسال کنید.\n\n"
+                                                 f"📝 می‌توانید هر اسم را در یک خط جداگانه یا در پیام‌های جداگانه بفرستید.\n"
+                                                 f"(برای اتمام، {count} اسم باید ارسال شود)")
+                        else:
+                            send_message(chat_id, "❌ تعداد باید بین ۳ تا ۲۰ باشد. لطفاً دوباره تلاش کن.")
+                    except ValueError:
+                        send_message(chat_id, "❌ لطفاً یک عدد معتبر وارد کنید (۳ تا ۲۰).")
                     return jsonify({"ok": True})
                 
-                # اضافه کردن اسم به لیست
-                data['names'].append(text.strip())
-                current_count = len(data['names'])
-                total_count = data['count']
-                
-                if current_count < total_count:
-                    send_message(chat_id, f"✅ اسم {current_count} ثبت شد.\n\nلطفاً اسم بازیکن {current_count + 1} را وارد کنید:")
-                else:
-                    # همه اسامی جمع شد - ثبت در دیتابیس
-                    conn = sqlite3.connect(DB_FILE)
-                    c = conn.cursor()
+                # مرحله دریافت اسامی
+                elif data.get('step') == 'collecting_names':
+                    # پردازش اسامی (تقسیم بر اساس خط جدید یا هر پیام جدا)
+                    names_to_add = []
+                    if '\n' in text:
+                        # چند اسم در یک پیام
+                        names_to_add = [name.strip() for name in text.split('\n') if name.strip()]
+                    else:
+                        # یک اسم در یک پیام
+                        names_to_add = [text.strip()]
                     
-                    for name in data['names']:
-                        c.execute("""
-                            INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
-                            VALUES (?, ?, ?, 'citizen', 1, 0, ?)
-                        """, (game_code, user_id, name, datetime.now().isoformat()))
+                    # اعتبارسنجی اسامی
+                    valid_names = []
+                    for name in names_to_add:
+                        if len(name) >= 2:
+                            valid_names.append(name)
+                        else:
+                            send_message(chat_id, f"❌ اسم «{name}» کمتر از ۲ کاراکتر است. لطفاً دوباره تلاش کن.")
+                            return jsonify({"ok": True})
                     
-                    conn.commit()
-                    conn.close()
+                    # اضافه کردن اسامی معتبر
+                    data['names'].extend(valid_names)
+                    current_count = len(data['names'])
+                    total_count = data['count']
                     
-                    # حذف از pending
-                    del pending_single_player_names[game_code]
+                    if current_count >= total_count:
+                        # همه اسامی جمع شد - ثبت در دیتابیس
+                        conn = sqlite3.connect(DB_FILE)
+                        c = conn.cursor()
+                        
+                        for name in data['names'][:total_count]:
+                            c.execute("""
+                                INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
+                                VALUES (?, ?, ?, 'citizen', 1, 0, ?)
+                            """, (game_code, user_id, name, datetime.now().isoformat()))
+                        
+                        conn.commit()
+                        conn.close()
+                        
+                        # حذف از pending
+                        del pending_single_player_names[game_code]
+                        
+                        send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + 
+                                     "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'][:total_count])]) + 
+                                     "\n\nدر حال شروع بازی...")
+                        
+                        start_game_round(game_code, chat_id)
+                    else:
+                        remaining = total_count - current_count
+                        pending_single_player_names[game_code] = data
+                        send_message(chat_id, f"✅ {current_count} اسم ثبت شد.\n\n"
+                                             f"لطفاً {remaining} اسم دیگر را ارسال کنید.\n"
+                                             f"(می‌توانید چند اسم را در یک پیام با خط جدید ارسال کنید)")
                     
-                    send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'])]) + "\n\nدر حال شروع بازی...")
-                    
-                    # شروع بازی
-                    start_game_round(game_code, chat_id)
-                
+                    return jsonify({"ok": True})
+            else:
+                # مرحله اول - دریافت تعداد بازیکنان
+                try:
+                    count = int(text)
+                    if 3 <= count <= 20:
+                        pending_single_player_names[game_code] = {
+                            'count': count,
+                            'names': [],
+                            'step': 'collecting_names'
+                        }
+                        send_message(chat_id, f"✅ تعداد بازیکنان: {count} نفر\n\n"
+                                             f"لطفاً اسامی بازیکنان را ارسال کنید.\n\n"
+                                             f"📝 می‌توانید هر اسم را در یک خط جداگانه یا در پیام‌های جداگانه بفرستید.\n"
+                                             f"(برای اتمام، {count} اسم باید ارسال شود)")
+                    else:
+                        send_message(chat_id, "❌ تعداد باید بین ۳ تا ۲۰ باشد. لطفاً دوباره تلاش کن.")
+                except ValueError:
+                    send_message(chat_id, "❌ لطفاً یک عدد معتبر وارد کنید (۳ تا ۲۰).")
                 return jsonify({"ok": True})
         
         # ================ ثبت‌نام در بازی چندنفره ================
@@ -758,7 +804,6 @@ def webhook():
                 send_message(chat_id, "❌ این بازی در حال ثبت‌نام نیست یا تموم شده!")
                 return jsonify({"ok": True})
             
-            # بررسی اینکه حالت بازی چندنفره باشد
             game_mode = get_game_mode(game_code)
             if game_mode != 'multi':
                 send_message(chat_id, "❌ این بازی برای حالت تک‌نفره طراحی شده است!")
