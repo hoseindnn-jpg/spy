@@ -5,6 +5,7 @@ import string
 import os
 import requests
 from datetime import datetime
+import time
 
 app = Flask(__name__)
 
@@ -40,7 +41,7 @@ def is_user_member_of_channel(user_id, channel_username):
 # ================ دیتابیس ================
 def load_words_from_json():
     """بارگذاری کلمات از فایل JSON به دیتابیس"""
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
     try:
         import json
@@ -80,75 +81,83 @@ def add_default_word_pairs():
         ("کیف", "کوله‌پشتی"), ("کودک", "نوجوان")
     ]
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    for word1, word2 in default_pairs:
-        c.execute("INSERT OR IGNORE INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)",
-                  (word1, word2, 'general'))
-    conn.commit()
-    conn.close()
-    print(f"✅ {len(default_pairs)} جفت‌کلمه پیش‌فرض به دیتابیس اضافه شد!")
+    try:
+        for word1, word2 in default_pairs:
+            c.execute("INSERT OR IGNORE INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)",
+                      (word1, word2, 'general'))
+        conn.commit()
+        print(f"✅ {len(default_pairs)} جفت‌کلمه پیش‌فرض به دیتابیس اضافه شد!")
+    except Exception as e:
+        print(f"❌ خطا در افزودن کلمات پیش‌فرض: {e}")
+    finally:
+        conn.close()
 
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
     
-    c.execute('''CREATE TABLE IF NOT EXISTS games (
-                    game_code TEXT PRIMARY KEY,
-                    admin_id INTEGER,
-                    status TEXT DEFAULT 'registering',
-                    created_at TEXT,
-                    round_number INTEGER DEFAULT 0,
-                    is_round_active INTEGER DEFAULT 0,
-                    word_pair_id INTEGER,
-                    game_mode TEXT DEFAULT 'multi'
-                 )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS players (
-                    id INTEGER PRIMARY KEY,
-                    game_code TEXT,
-                    user_id INTEGER,
-                    display_name TEXT,
-                    role TEXT,
-                    is_alive INTEGER DEFAULT 1,
-                    score INTEGER DEFAULT 0,
-                    joined_at TEXT,
-                    FOREIGN KEY (game_code) REFERENCES games (game_code)
-                 )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS word_pairs (
-                    id INTEGER PRIMARY KEY,
-                    word1 TEXT,
-                    word2 TEXT,
-                    category TEXT,
-                    used_count INTEGER DEFAULT 0
-                 )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS rounds (
-                    id INTEGER PRIMARY KEY,
-                    game_code TEXT,
-                    round_number INTEGER,
-                    word_pair_id INTEGER,
-                    status TEXT DEFAULT 'speaking',
-                    started_at TEXT,
-                    ended_at TEXT,
-                    FOREIGN KEY (game_code) REFERENCES games (game_code),
-                    FOREIGN KEY (word_pair_id) REFERENCES word_pairs (id)
-                 )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS votes (
-                    id INTEGER PRIMARY KEY,
-                    round_id INTEGER,
-                    voter_id INTEGER,
-                    target_id INTEGER,
-                    voted_at TEXT,
-                    FOREIGN KEY (round_id) REFERENCES rounds (id),
-                    FOREIGN KEY (voter_id) REFERENCES players (id),
-                    FOREIGN KEY (target_id) REFERENCES players (id)
-                 )''')
-    
-    conn.commit()
-    conn.close()
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS games (
+                        game_code TEXT PRIMARY KEY,
+                        admin_id INTEGER,
+                        status TEXT DEFAULT 'registering',
+                        created_at TEXT,
+                        round_number INTEGER DEFAULT 0,
+                        is_round_active INTEGER DEFAULT 0,
+                        word_pair_id INTEGER,
+                        game_mode TEXT DEFAULT 'multi'
+                     )''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS players (
+                        id INTEGER PRIMARY KEY,
+                        game_code TEXT,
+                        user_id INTEGER,
+                        display_name TEXT,
+                        role TEXT,
+                        is_alive INTEGER DEFAULT 1,
+                        score INTEGER DEFAULT 0,
+                        joined_at TEXT,
+                        FOREIGN KEY (game_code) REFERENCES games (game_code)
+                     )''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS word_pairs (
+                        id INTEGER PRIMARY KEY,
+                        word1 TEXT,
+                        word2 TEXT,
+                        category TEXT,
+                        used_count INTEGER DEFAULT 0
+                     )''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS rounds (
+                        id INTEGER PRIMARY KEY,
+                        game_code TEXT,
+                        round_number INTEGER,
+                        word_pair_id INTEGER,
+                        status TEXT DEFAULT 'speaking',
+                        started_at TEXT,
+                        ended_at TEXT,
+                        FOREIGN KEY (game_code) REFERENCES games (game_code),
+                        FOREIGN KEY (word_pair_id) REFERENCES word_pairs (id)
+                     )''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS votes (
+                        id INTEGER PRIMARY KEY,
+                        round_id INTEGER,
+                        voter_id INTEGER,
+                        target_id INTEGER,
+                        voted_at TEXT,
+                        FOREIGN KEY (round_id) REFERENCES rounds (id),
+                        FOREIGN KEY (voter_id) REFERENCES players (id),
+                        FOREIGN KEY (target_id) REFERENCES players (id)
+                     )''')
+        
+        conn.commit()
+    except Exception as e:
+        print(f"❌ خطا در ایجاد دیتابیس: {e}")
+    finally:
+        conn.close()
     
     add_default_word_pairs()
     load_words_from_json()
@@ -171,147 +180,198 @@ def send_message(chat_id, text, reply_markup=None, disable_web_page_preview=Fals
         print(f"Error sending: {e}")
 
 def get_alive_players(game_code):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT id, user_id, display_name, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
-    players = c.fetchall()
-    conn.close()
-    return players
+    try:
+        c.execute("SELECT id, user_id, display_name, role FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
+        players = c.fetchall()
+        return players
+    except Exception as e:
+        print(f"Error in get_alive_players: {e}")
+        return []
+    finally:
+        conn.close()
 
 def get_all_players(game_code):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT id, user_id, display_name, role, score FROM players WHERE game_code = ?", (game_code,))
-    players = c.fetchall()
-    conn.close()
-    return players
+    try:
+        c.execute("SELECT id, user_id, display_name, role, score FROM players WHERE game_code = ?", (game_code,))
+        players = c.fetchall()
+        return players
+    except Exception as e:
+        print(f"Error in get_all_players: {e}")
+        return []
+    finally:
+        conn.close()
 
 def get_players_count(game_code):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
-    count = c.fetchone()[0]
-    conn.close()
-    return count
+    try:
+        c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
+        count = c.fetchone()[0]
+        return count
+    except Exception as e:
+        print(f"Error in get_players_count: {e}")
+        return 0
+    finally:
+        conn.close()
 
 def get_game_status(game_code):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT status FROM games WHERE game_code = ?", (game_code,))
-    status = c.fetchone()
-    conn.close()
-    return status[0] if status else None
+    try:
+        c.execute("SELECT status FROM games WHERE game_code = ?", (game_code,))
+        status = c.fetchone()
+        return status[0] if status else None
+    except Exception as e:
+        print(f"Error in get_game_status: {e}")
+        return None
+    finally:
+        conn.close()
 
 def get_game_mode(game_code):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT game_mode FROM games WHERE game_code = ?", (game_code,))
-    mode = c.fetchone()
-    conn.close()
-    return mode[0] if mode else 'multi'
+    try:
+        c.execute("SELECT game_mode FROM games WHERE game_code = ?", (game_code,))
+        mode = c.fetchone()
+        return mode[0] if mode else 'multi'
+    except Exception as e:
+        print(f"Error in get_game_mode: {e}")
+        return 'multi'
+    finally:
+        conn.close()
 
 def get_role_persian(role):
     return {'citizen': 'شهروند', 'misled': 'گمراه', 'spy': 'جاسوس'}.get(role, role)
 
 def get_game_word_pair(game_code):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT word1, word2 FROM word_pairs wp JOIN games g ON g.word_pair_id = wp.id WHERE g.game_code = ?", (game_code,))
-    result = c.fetchone()
-    conn.close()
-    return result
+    try:
+        c.execute("SELECT word1, word2 FROM word_pairs wp JOIN games g ON g.word_pair_id = wp.id WHERE g.game_code = ?", (game_code,))
+        result = c.fetchone()
+        return result
+    except Exception as e:
+        print(f"Error in get_game_word_pair: {e}")
+        return None
+    finally:
+        conn.close()
 # ================ توزیع نقش و کلمه ================
 def assign_roles(game_code):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT id FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
-    players = c.fetchall()
-    player_ids = [p[0] for p in players]
-    total = len(player_ids)
-    
-    if total < 3 or total > 20:
-        conn.close()
+    try:
+        c.execute("SELECT id FROM players WHERE game_code = ? AND is_alive = 1", (game_code,))
+        players = c.fetchall()
+        player_ids = [p[0] for p in players]
+        total = len(player_ids)
+        
+        if total < 3 or total > 20:
+            return None
+        
+        role_mapping = {
+            3: {'spy': 0, 'misled': 1, 'citizen': 2},
+            4: {'spy': 0, 'misled': 1, 'citizen': 3},
+            5: {'spy': 1, 'misled': 1, 'citizen': 3},
+            6: {'spy': 1, 'misled': 1, 'citizen': 4},
+            7: {'spy': 1, 'misled': 2, 'citizen': 4},
+            8: {'spy': 1, 'misled': 2, 'citizen': 5},
+            9: {'spy': 1, 'misled': 3, 'citizen': 5},
+            10: {'spy': 1, 'misled': 3, 'citizen': 6},
+            11: {'spy': 2, 'misled': 3, 'citizen': 6},
+            12: {'spy': 2, 'misled': 3, 'citizen': 7},
+            13: {'spy': 2, 'misled': 4, 'citizen': 7},
+            14: {'spy': 2, 'misled': 4, 'citizen': 8},
+            15: {'spy': 2, 'misled': 5, 'citizen': 8},
+            16: {'spy': 2, 'misled': 5, 'citizen': 9},
+            17: {'spy': 3, 'misled': 5, 'citizen': 9},
+            18: {'spy': 3, 'misled': 5, 'citizen': 10},
+            19: {'spy': 3, 'misled': 6, 'citizen': 10},
+            20: {'spy': 3, 'misled': 6, 'citizen': 11},
+        }
+        
+        roles_config = role_mapping.get(total)
+        if not roles_config:
+            return None
+        
+        spy_count = roles_config['spy']
+        misled_count = roles_config['misled']
+        citizen_count = roles_config['citizen']
+        
+        roles = ['citizen'] * citizen_count + ['misled'] * misled_count + ['spy'] * spy_count
+        random.shuffle(roles)
+        
+        for player_id, role in zip(player_ids, roles):
+            c.execute("UPDATE players SET role = ? WHERE id = ?", (role, player_id))
+        
+        conn.commit()
+        return {'citizen': citizen_count, 'misled': misled_count, 'spy': spy_count}
+    except Exception as e:
+        print(f"Error in assign_roles: {e}")
         return None
-    
-    role_mapping = {
-        3: {'spy': 0, 'misled': 1, 'citizen': 2},
-        4: {'spy': 0, 'misled': 1, 'citizen': 3},
-        5: {'spy': 1, 'misled': 1, 'citizen': 3},
-        6: {'spy': 1, 'misled': 1, 'citizen': 4},
-        7: {'spy': 1, 'misled': 2, 'citizen': 4},
-        8: {'spy': 1, 'misled': 2, 'citizen': 5},
-        9: {'spy': 1, 'misled': 3, 'citizen': 5},
-        10: {'spy': 1, 'misled': 3, 'citizen': 6},
-        11: {'spy': 2, 'misled': 3, 'citizen': 6},
-        12: {'spy': 2, 'misled': 3, 'citizen': 7},
-        13: {'spy': 2, 'misled': 4, 'citizen': 7},
-        14: {'spy': 2, 'misled': 4, 'citizen': 8},
-        15: {'spy': 2, 'misled': 5, 'citizen': 8},
-        16: {'spy': 2, 'misled': 5, 'citizen': 9},
-        17: {'spy': 3, 'misled': 5, 'citizen': 9},
-        18: {'spy': 3, 'misled': 5, 'citizen': 10},
-        19: {'spy': 3, 'misled': 6, 'citizen': 10},
-        20: {'spy': 3, 'misled': 6, 'citizen': 11},
-    }
-    
-    roles_config = role_mapping.get(total)
-    if not roles_config:
+    finally:
         conn.close()
-        return None
-    
-    spy_count = roles_config['spy']
-    misled_count = roles_config['misled']
-    citizen_count = roles_config['citizen']
-    
-    roles = ['citizen'] * citizen_count + ['misled'] * misled_count + ['spy'] * spy_count
-    random.shuffle(roles)
-    
-    for player_id, role in zip(player_ids, roles):
-        c.execute("UPDATE players SET role = ? WHERE id = ?", (role, player_id))
-    
-    conn.commit()
-    conn.close()
-    return {'citizen': citizen_count, 'misled': misled_count, 'spy': spy_count}
 
 def get_word_pair():
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT id, word1, word2, category FROM word_pairs ORDER BY used_count ASC, RANDOM() LIMIT 1")
-    pair = c.fetchone()
-    conn.close()
-    return pair
+    try:
+        c.execute("SELECT id, word1, word2, category FROM word_pairs ORDER BY used_count ASC, RANDOM() LIMIT 1")
+        pair = c.fetchone()
+        return pair
+    except Exception as e:
+        print(f"Error in get_word_pair: {e}")
+        return None
+    finally:
+        conn.close()
 
 def get_word_for_role(word_pair_id, role):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT word1, word2 FROM word_pairs WHERE id = ?", (word_pair_id,))
-    word1, word2 = c.fetchone()
-    conn.close()
-    
-    if role == 'citizen':
-        return word1
-    elif role == 'misled':
-        return word2
-    else:
+    try:
+        c.execute("SELECT word1, word2 FROM word_pairs WHERE id = ?", (word_pair_id,))
+        word1, word2 = c.fetchone()
+        if role == 'citizen':
+            return word1
+        elif role == 'misled':
+            return word2
+        else:
+            return None
+    except Exception as e:
+        print(f"Error in get_word_for_role: {e}")
         return None
+    finally:
+        conn.close()
 
 def add_score_to_team(game_code, role, points):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("UPDATE players SET score = score + ? WHERE game_code = ? AND role = ?",
-              (points, game_code, role))
-    conn.commit()
-    conn.close()
+    try:
+        c.execute("UPDATE players SET score = score + ? WHERE game_code = ? AND role = ?",
+                  (points, game_code, role))
+        conn.commit()
+    except Exception as e:
+        print(f"Error in add_score_to_team: {e}")
+    finally:
+        conn.close()
 
 def start_new_game(chat_id, admin_id, game_mode='multi'):
     """شروع بازی جدید با حالت مشخص"""
     game_code = generate_code()
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("INSERT INTO games (game_code, admin_id, status, created_at, is_round_active, game_mode) VALUES (?, ?, 'registering', ?, 0, ?)",
-              (game_code, admin_id, datetime.now().isoformat(), game_mode))
-    conn.commit()
-    conn.close()
+    try:
+        c.execute("INSERT INTO games (game_code, admin_id, status, created_at, is_round_active, game_mode) VALUES (?, ?, 'registering', ?, 0, ?)",
+                  (game_code, admin_id, datetime.now().isoformat(), game_mode))
+        conn.commit()
+    except Exception as e:
+        send_message(chat_id, f"❌ خطا در ایجاد بازی: {str(e)}")
+        return
+    finally:
+        conn.close()
     
     if game_mode == 'single':
         send_message(chat_id,  
@@ -337,7 +397,7 @@ def start_new_game(chat_id, admin_id, game_mode='multi'):
 
 def start_game_round(game_code, chat_id):
     try:
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, timeout=10)
         c = conn.cursor()
         
         # مرحله 1: پاک کردن آرای قبلی
@@ -438,57 +498,68 @@ def start_game_round(game_code, chat_id):
     except Exception as e:
         send_message(chat_id, f"❌ خطا در شروع بازی: {str(e)}\n\nلطفاً با پشتیبانی تماس بگیرید.")
         print(f"Error in start_game_round: {e}")
+
 def show_next_single_player(game_code, chat_id):
     """نمایش نقش بازیکن بعدی در حالت تک‌نفره"""
-    data = pending_single_player_names.get(game_code)
-    if not data:
-        send_message(chat_id, "❌ خطا: اطلاعات بازی یافت نشد! لطفاً بازی را مجدداً شروع کنید.")
-        return
-    
-    players = data.get('players', [])
-    current_index = data.get('current_index', 0)
-    round_number = data.get('round_number', 0)
-    
-    if not players:
-        send_message(chat_id, "❌ خطا: لیست بازیکنان خالی است!")
-        return
-    
-    if current_index >= len(players):
-        send_message(chat_id, "✅ همه نقش‌ها نمایش داده شدند!\n\nاکنون می‌توانید رای‌گیری حضوری را شروع کنید.")
-        del pending_single_player_names[game_code]
-        return
-    
-    player_id, player_user_id, display_name, role = players[current_index]
-    word_pair_id = get_word_pair_id_for_game(game_code)
-    
-    if not word_pair_id:
-        send_message(chat_id, f"❌ خطا: کلمه‌ای برای بازی یافت نشد! لطفاً کلمات را به دیتابیس اضافه کنید.")
-        return
-    
-    if role == 'spy':
-        word = "🕵️‍♂️ شما جاسوس هستید! (کلمه‌ای نمی‌بینید)"
-    else:
-        word = get_word_for_role(word_pair_id, role)
-        word = f"🔍 {word}"
-    
-    message = f"🎭 <b>بازیکن {current_index + 1} از {len(players)}</b>\n\n"
-    message += f"👤 نام: {display_name}\n"
-    message += f"🎭 نقش: {get_role_persian(role)}\n"
-    message += f"📝 کلمه: {word}\n\n"
-    message += f"📌 دور {round_number}"
-    
-    send_message(chat_id, message)
-    
-    data['current_index'] = current_index + 1
-    pending_single_player_names[game_code] = data
+    try:
+        data = pending_single_player_names.get(game_code)
+        if not data:
+            send_message(chat_id, "❌ خطا: اطلاعات بازی یافت نشد! لطفاً بازی را مجدداً شروع کنید.")
+            return
+        
+        players = data.get('players', [])
+        current_index = data.get('current_index', 0)
+        round_number = data.get('round_number', 0)
+        
+        if not players:
+            send_message(chat_id, "❌ خطا: لیست بازیکنان خالی است!")
+            return
+        
+        if current_index >= len(players):
+            send_message(chat_id, "✅ همه نقش‌ها نمایش داده شدند!\n\nاکنون می‌توانید رای‌گیری حضوری را شروع کنید.")
+            del pending_single_player_names[game_code]
+            return
+        
+        player_id, player_user_id, display_name, role = players[current_index]
+        word_pair_id = get_word_pair_id_for_game(game_code)
+        
+        if not word_pair_id:
+            send_message(chat_id, f"❌ خطا: کلمه‌ای برای بازی یافت نشد! لطفاً کلمات را به دیتابیس اضافه کنید.")
+            return
+        
+        if role == 'spy':
+            word = "🕵️‍♂️ شما جاسوس هستید! (کلمه‌ای نمی‌بینید)"
+        else:
+            word = get_word_for_role(word_pair_id, role)
+            word = f"🔍 {word}"
+        
+        message = f"🎭 <b>بازیکن {current_index + 1} از {len(players)}</b>\n\n"
+        message += f"👤 نام: {display_name}\n"
+        message += f"🎭 نقش: {get_role_persian(role)}\n"
+        message += f"📝 کلمه: {word}\n\n"
+        message += f"📌 دور {round_number}"
+        
+        send_message(chat_id, message)
+        
+        data['current_index'] = current_index + 1
+        pending_single_player_names[game_code] = data
+        
+    except Exception as e:
+        send_message(chat_id, f"❌ خطا در نمایش نقش: {str(e)}")
+        print(f"Error in show_next_single_player: {e}")
 
 def get_word_pair_id_for_game(game_code):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT word_pair_id FROM games WHERE game_code = ?", (game_code,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else None
+    try:
+        c.execute("SELECT word_pair_id FROM games WHERE game_code = ?", (game_code,))
+        result = c.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        print(f"Error in get_word_pair_id_for_game: {e}")
+        return None
+    finally:
+        conn.close()
 # ================ مسیرهای اصلی ================
 @app.route('/')
 def home():
@@ -556,11 +627,16 @@ def webhook():
             
             # شروع بازی جدید - انتخاب حالت
             if data == "new_game":
-                conn = sqlite3.connect(DB_FILE)
+                conn = sqlite3.connect(DB_FILE, timeout=10)
                 c = conn.cursor()
-                c.execute("SELECT game_code FROM games WHERE status != 'finished' AND admin_id = ?", (user_id,))
-                existing_game = c.fetchone()
-                conn.close()
+                try:
+                    c.execute("SELECT game_code FROM games WHERE status != 'finished' AND admin_id = ?", (user_id,))
+                    existing_game = c.fetchone()
+                except Exception as e:
+                    send_message(chat_id, f"❌ خطا در بررسی بازی قبلی: {str(e)}")
+                    return jsonify({"ok": True})
+                finally:
+                    conn.close()
                 
                 if existing_game:
                     keyboard = {
@@ -591,12 +667,17 @@ def webhook():
             elif data.startswith("confirm_new_game:"):
                 admin_id = int(data.split(":")[1])
                 if user_id == admin_id:
-                    conn = sqlite3.connect(DB_FILE)
+                    conn = sqlite3.connect(DB_FILE, timeout=10)
                     c = conn.cursor()
-                    c.execute("DELETE FROM games WHERE admin_id = ? AND status != 'finished'", (admin_id,))
-                    c.execute("DELETE FROM players WHERE game_code IN (SELECT game_code FROM games WHERE admin_id = ?)", (admin_id,))
-                    conn.commit()
-                    conn.close()
+                    try:
+                        c.execute("DELETE FROM games WHERE admin_id = ? AND status != 'finished'", (admin_id,))
+                        c.execute("DELETE FROM players WHERE game_code IN (SELECT game_code FROM games WHERE admin_id = ?)", (admin_id,))
+                        conn.commit()
+                    except Exception as e:
+                        send_message(chat_id, f"❌ خطا در حذف بازی قبلی: {str(e)}")
+                        return jsonify({"ok": True})
+                    finally:
+                        conn.close()
                     
                     keyboard = {
                         "inline_keyboard": [
@@ -610,16 +691,21 @@ def webhook():
             
             elif data.startswith("finish_register:"):
                 game_code = data.split(":")[1]
-                conn = sqlite3.connect(DB_FILE)
+                conn = sqlite3.connect(DB_FILE, timeout=10)
                 c = conn.cursor()
-                c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
-                count = c.fetchone()[0]
+                try:
+                    c.execute("SELECT COUNT(*) FROM players WHERE game_code = ?", (game_code,))
+                    count = c.fetchone()[0]
+                except Exception as e:
+                    send_message(chat_id, f"❌ خطا در شمارش بازیکنان: {str(e)}")
+                    return jsonify({"ok": True})
+                finally:
+                    conn.close()
                 
                 if count < 3:
                     send_message(chat_id, f"⚠️ تعداد بازیکنان ({count}) کافی نیست!\n\nحداقل ۳ نفر برای شروع بازی لازمه.\n\nبازیکنان بیشتری ثبت‌نام کنن.")
                 else:
                     start_game_round(game_code, chat_id)
-                conn.close()
             
             elif data.startswith("single_next:"):
                 game_code = data.split(":")[1]
@@ -630,11 +716,16 @@ def webhook():
                 game_code = parts[1]
                 round_id = int(parts[2])
                 
-                conn = sqlite3.connect(DB_FILE)
+                conn = sqlite3.connect(DB_FILE, timeout=10)
                 c = conn.cursor()
-                c.execute("UPDATE games SET is_round_active = 1 WHERE game_code = ?", (game_code,))
-                conn.commit()
-                conn.close()
+                try:
+                    c.execute("UPDATE games SET is_round_active = 1 WHERE game_code = ?", (game_code,))
+                    conn.commit()
+                except Exception as e:
+                    send_message(chat_id, f"❌ خطا در شروع رای‌گیری: {str(e)}")
+                    return jsonify({"ok": True})
+                finally:
+                    conn.close()
                 
                 alive_players = get_alive_players(game_code)
                 for player in alive_players:
@@ -660,27 +751,32 @@ def webhook():
                 voter_id = int(parts[2])
                 target_id = int(parts[3])
                 
-                conn = sqlite3.connect(DB_FILE)
+                conn = sqlite3.connect(DB_FILE, timeout=10)
                 c = conn.cursor()
-                c.execute("SELECT is_round_active FROM games WHERE game_code = (SELECT game_code FROM rounds WHERE id = ?)", (round_id,))
-                is_active = c.fetchone()
-                if not is_active or is_active[0] == 0:
-                    send_message(chat_id, "❌ رای‌گیری به پایان رسیده یا غیرفعال است!")
+                try:
+                    c.execute("SELECT is_round_active FROM games WHERE game_code = (SELECT game_code FROM rounds WHERE id = ?)", (round_id,))
+                    is_active = c.fetchone()
+                    if not is_active or is_active[0] == 0:
+                        send_message(chat_id, "❌ رای‌گیری به پایان رسیده یا غیرفعال است!")
+                        conn.close()
+                        return jsonify({"ok": True})
+                    
+                    c.execute("SELECT id FROM votes WHERE round_id = ? AND voter_id = ?", (round_id, voter_id))
+                    existing = c.fetchone()
+                    
+                    if existing:
+                        c.execute("UPDATE votes SET target_id = ?, voted_at = ? WHERE id = ?",
+                                  (target_id, datetime.now().isoformat(), existing[0]))
+                    else:
+                        c.execute("INSERT INTO votes (round_id, voter_id, target_id, voted_at) VALUES (?, ?, ?, ?)",
+                                  (round_id, voter_id, target_id, datetime.now().isoformat()))
+                    
+                    conn.commit()
+                    send_message(chat_id, "✅ رای شما ثبت شد!")
+                except Exception as e:
+                    send_message(chat_id, f"❌ خطا در ثبت رای: {str(e)}")
+                finally:
                     conn.close()
-                    return jsonify({"ok": True})
-                
-                c.execute("SELECT id FROM votes WHERE round_id = ? AND voter_id = ?", (round_id, voter_id))
-                existing = c.fetchone()
-                if existing:
-                    c.execute("UPDATE votes SET target_id = ?, voted_at = ? WHERE id = ?",
-                              (target_id, datetime.now().isoformat(), existing[0]))
-                else:
-                    c.execute("INSERT INTO votes (round_id, voter_id, target_id, voted_at) VALUES (?, ?, ?, ?)",
-                              (round_id, voter_id, target_id, datetime.now().isoformat()))
-                
-                conn.commit()
-                conn.close()
-                send_message(chat_id, "✅ رای شما ثبت شد!")
             
             elif data.startswith("finish_voting:") or data.startswith("finish_tie_voting:"):
                 parts = data.split(":")
@@ -690,12 +786,17 @@ def webhook():
             
             elif data.startswith("new_round:"):
                 game_code = data.split(":")[1]
-                conn = sqlite3.connect(DB_FILE)
+                conn = sqlite3.connect(DB_FILE, timeout=10)
                 c = conn.cursor()
-                c.execute("UPDATE players SET is_alive = 1 WHERE game_code = ?", (game_code,))
-                c.execute("UPDATE games SET status = 'playing' WHERE game_code = ?", (game_code,))
-                conn.commit()
-                conn.close()
+                try:
+                    c.execute("UPDATE players SET is_alive = 1 WHERE game_code = ?", (game_code,))
+                    c.execute("UPDATE games SET status = 'playing' WHERE game_code = ?", (game_code,))
+                    conn.commit()
+                except Exception as e:
+                    send_message(chat_id, f"❌ خطا در شروع دور جدید: {str(e)}")
+                    return jsonify({"ok": True})
+                finally:
+                    conn.close()
                 send_message(chat_id, "🔄 دور جدید با همه بازیکنان شروع می‌شود...")
                 start_game_round(game_code, chat_id)
             
@@ -719,15 +820,20 @@ def webhook():
             }
             send_message(chat_id, "🕵️‍♂️ <b>به ربات جاسوس پیشرفته خوش اومدی!</b>\n\nیه بازی گروهی جذاب برای کشف جاسوس بین دوستان.", keyboard)
             return jsonify({"ok": True})
-            # ================ حالت تک‌نفره - دریافت تعداد بازیکنان و اسامی ================
+        # ================ حالت تک‌نفره - دریافت تعداد بازیکنان و اسامی ================
         is_single_mode = False
         game_code = None
         
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, timeout=10)
         c = conn.cursor()
-        c.execute("SELECT game_code FROM games WHERE admin_id = ? AND game_mode = 'single' AND status = 'registering'", (user_id,))
-        single_game = c.fetchone()
-        conn.close()
+        try:
+            c.execute("SELECT game_code FROM games WHERE admin_id = ? AND game_mode = 'single' AND status = 'registering'", (user_id,))
+            single_game = c.fetchone()
+        except Exception as e:
+            print(f"Error finding single game: {e}")
+            single_game = None
+        finally:
+            conn.close()
         
         if single_game:
             game_code = single_game[0]
@@ -776,24 +882,28 @@ def webhook():
                     total_count = data['count']
                     
                     if current_count >= total_count:
-                        conn = sqlite3.connect(DB_FILE)
+                        conn = sqlite3.connect(DB_FILE, timeout=10)
                         c = conn.cursor()
-                        for name in data['names'][:total_count]:
-                            c.execute("""
-                                INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
-                                VALUES (?, ?, ?, 'citizen', 1, 0, ?)
-                            """, (game_code, user_id, name, datetime.now().isoformat()))
-                        conn.commit()
-                        conn.close()
+                        try:
+                            for name in data['names'][:total_count]:
+                                c.execute("""
+                                    INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
+                                    VALUES (?, ?, ?, 'citizen', 1, 0, ?)
+                                """, (game_code, user_id, name, datetime.now().isoformat()))
+                            conn.commit()
+                        except Exception as e:
+                            send_message(chat_id, f"❌ خطا در ذخیره اسامی: {str(e)}")
+                            return jsonify({"ok": True})
+                        finally:
+                            conn.close()
                         
                         del pending_single_player_names[game_code]
                         
                         send_message(chat_id, f"✅ {total_count} بازیکن ثبت شدند!\n\n" + 
                                      "\n".join([f"{i+1}. {name}" for i, name in enumerate(data['names'][:total_count])]) + 
                                      "\n\n🔄 در حال شروع بازی...")
-                        import time
+                        
                         time.sleep(0.5)
-
                         start_game_round(game_code, chat_id)
                     else:
                         remaining = total_count - current_count
@@ -835,11 +945,16 @@ def webhook():
                 send_message(chat_id, "❌ این بازی برای حالت تک‌نفره طراحی شده است!")
                 return jsonify({"ok": True})
             
-            conn = sqlite3.connect(DB_FILE)
+            conn = sqlite3.connect(DB_FILE, timeout=10)
             c = conn.cursor()
-            c.execute("SELECT id FROM players WHERE game_code = ? AND user_id = ?", (game_code, user_id))
-            existing = c.fetchone()
-            conn.close()
+            try:
+                c.execute("SELECT id FROM players WHERE game_code = ? AND user_id = ?", (game_code, user_id))
+                existing = c.fetchone()
+            except Exception as e:
+                send_message(chat_id, f"❌ خطا در بررسی ثبت‌نام: {str(e)}")
+                return jsonify({"ok": True})
+            finally:
+                conn.close()
             
             if existing:
                 send_message(chat_id, "✅ شما قبلاً در این بازی ثبت‌نام کردید!")
@@ -857,29 +972,42 @@ def webhook():
                 send_message(chat_id, "❌ اسم مستعار باید حداقل ۲ کاراکتر باشه. لطفاً دوباره تلاش کن.")
                 return jsonify({"ok": True})
             
-            conn = sqlite3.connect(DB_FILE)
+            conn = sqlite3.connect(DB_FILE, timeout=10)
             c = conn.cursor()
-            c.execute("SELECT display_name FROM players WHERE game_code = ? AND display_name = ?", (game_code, text.strip()))
-            duplicate = c.fetchone()
-            
-            if duplicate:
-                send_message(chat_id, f"❌ اسم مستعار «{text.strip()}» قبلاً توسط کس دیگه‌ای انتخاب شده! لطفاً اسم دیگه‌ای انتخاب کن.")
-                conn.close()
+            try:
+                c.execute("SELECT display_name FROM players WHERE game_code = ? AND display_name = ?", (game_code, text.strip()))
+                duplicate = c.fetchone()
+                
+                if duplicate:
+                    send_message(chat_id, f"❌ اسم مستعار «{text.strip()}» قبلاً توسط کس دیگه‌ای انتخاب شده! لطفاً اسم دیگه‌ای انتخاب کن.")
+                    conn.close()
+                    return jsonify({"ok": True})
+                
+                c.execute("""
+                    INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
+                    VALUES (?, ?, ?, 'citizen', 1, 0, ?)
+                """, (game_code, user_id, text.strip(), datetime.now().isoformat()))
+                conn.commit()
+            except Exception as e:
+                send_message(chat_id, f"❌ خطا در ثبت‌نام: {str(e)}")
                 return jsonify({"ok": True})
-            
-            c.execute("""
-                INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
-                VALUES (?, ?, ?, 'citizen', 1, 0, ?)
-            """, (game_code, user_id, text.strip(), datetime.now().isoformat()))
-            conn.commit()
+            finally:
+                conn.close()
             
             del pending_registrations[user_id]
             
             send_message(chat_id, f"✅ شما با اسم مستعار «{text.strip()}» در بازی ثبت‌نام شدید!\n\nمنتظر شروع بازی توسط مدیر باشید.")
             
-            c.execute("SELECT admin_id FROM games WHERE game_code = ?", (game_code,))
-            admin = c.fetchone()
-            conn.close()
+            admin = None
+            conn = sqlite3.connect(DB_FILE, timeout=10)
+            c = conn.cursor()
+            try:
+                c.execute("SELECT admin_id FROM games WHERE game_code = ?", (game_code,))
+                admin = c.fetchone()
+            except Exception as e:
+                print(f"Error getting admin: {e}")
+            finally:
+                conn.close()
             
             if admin:
                 send_message(admin[0], f"🔔 کاربر جدید با اسم «{text.strip()}» به بازی پیوست.\n\nتعداد بازیکنان فعلی: {get_players_count(game_code)} نفر")
@@ -900,122 +1028,132 @@ def webhook():
 
 # ================ توابع مدیریت رای‌گیری و پایان بازی ================
 def finish_voting_round(game_code, round_id, chat_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    
-    alive_players = get_alive_players(game_code)
-    total_players = len(alive_players)
-    
-    c.execute("SELECT COUNT(DISTINCT voter_id) FROM votes WHERE round_id = ?", (round_id,))
-    voted_count = c.fetchone()[0]
-    
-    if voted_count < total_players:
-        send_message(chat_id, f"⚠️ فقط {voted_count} نفر از {total_players} نفر رای دادن!\n\nهمه باید رای بدن. صبر کن تا همه رای بدن.")
-        conn.close()
-        return
-    
-    c.execute("UPDATE games SET is_round_active = 0 WHERE game_code = ?", (game_code,))
-    
-    c.execute("""
-        SELECT target_id, COUNT(*) as vote_count
-        FROM votes
-        WHERE round_id = ?
-        GROUP BY target_id
-        ORDER BY vote_count DESC
-    """, (round_id,))
-    results = c.fetchall()
-    
-    if not results:
-        send_message(chat_id, "❌ هیچ رایی ثبت نشده!")
-        conn.close()
-        return
-    
-    max_votes = results[0][1]
-    top_candidates = [r[0] for r in results if r[1] == max_votes]
-    
-    if len(top_candidates) == 1:
-        target_id = top_candidates[0]
-        c.execute("SELECT display_name, role FROM players WHERE id = ?", (target_id,))
-        eliminated = c.fetchone()
+    try:
+        alive_players = get_alive_players(game_code)
+        total_players = len(alive_players)
         
-        if eliminated:
-            eliminated_name, eliminated_role = eliminated
-            c.execute("UPDATE players SET is_alive = 0 WHERE id = ?", (target_id,))
-            conn.commit()
+        c.execute("SELECT COUNT(DISTINCT voter_id) FROM votes WHERE round_id = ?", (round_id,))
+        voted_count = c.fetchone()[0]
+        
+        if voted_count < total_players:
+            send_message(chat_id, f"⚠️ فقط {voted_count} نفر از {total_players} نفر رای دادن!\n\nهمه باید رای بدن. صبر کن تا همه رای بدن.")
+            return
+        
+        c.execute("UPDATE games SET is_round_active = 0 WHERE game_code = ?", (game_code,))
+        
+        c.execute("""
+            SELECT target_id, COUNT(*) as vote_count
+            FROM votes
+            WHERE round_id = ?
+            GROUP BY target_id
+            ORDER BY vote_count DESC
+        """, (round_id,))
+        results = c.fetchall()
+        
+        if not results:
+            send_message(chat_id, "❌ هیچ رایی ثبت نشده!")
+            return
+        
+        max_votes = results[0][1]
+        top_candidates = [r[0] for r in results if r[1] == max_votes]
+        
+        if len(top_candidates) == 1:
+            target_id = top_candidates[0]
+            c.execute("SELECT display_name, role FROM players WHERE id = ?", (target_id,))
+            eliminated = c.fetchone()
             
-            role_persian = get_role_persian(eliminated_role)
-            send_message(chat_id, f"⛔️ <b>{eliminated_name}</b> با {max_votes} رای حذف شد!\n\n🔍 نقش مخفی اون: <b>{role_persian}</b>")
-            
-            c.execute("SELECT user_id FROM players WHERE id = ?", (target_id,))
-            eliminated_user = c.fetchone()
-            if eliminated_user:
-                send_message(eliminated_user[0], f"⛔️ شما با {max_votes} رای حذف شدید!\n\n🔍 نقش شما: <b>{role_persian}</b>")
-            
-            if eliminated_role == 'spy':
-                conn.close()
-                handle_spy_elimination(game_code, target_id, chat_id)
-                return
-            
-            c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1 AND role = 'citizen'", (game_code,))
-            citizen_count = c.fetchone()[0]
-            
-            if citizen_count == 0:
-                add_score_to_team(game_code, 'misled', 10)
-                add_score_to_team(game_code, 'spy', 6)
+            if eliminated:
+                eliminated_name, eliminated_role = eliminated
+                c.execute("UPDATE players SET is_alive = 0 WHERE id = ?", (target_id,))
+                conn.commit()
+                
+                role_persian = get_role_persian(eliminated_role)
+                send_message(chat_id, f"⛔️ <b>{eliminated_name}</b> با {max_votes} رای حذف شد!\n\n🔍 نقش مخفی اون: <b>{role_persian}</b>")
+                
+                c.execute("SELECT user_id FROM players WHERE id = ?", (target_id,))
+                eliminated_user = c.fetchone()
+                if eliminated_user:
+                    send_message(eliminated_user[0], f"⛔️ شما با {max_votes} رای حذف شدید!\n\n🔍 نقش شما: <b>{role_persian}</b>")
+                
+                if eliminated_role == 'spy':
+                    conn.close()
+                    handle_spy_elimination(game_code, target_id, chat_id)
+                    return
+                
+                c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1 AND role = 'citizen'", (game_code,))
+                citizen_count = c.fetchone()[0]
+                
+                if citizen_count == 0:
+                    add_score_to_team(game_code, 'misled', 10)
+                    add_score_to_team(game_code, 'spy', 6)
+                    conn.commit()
+                    conn.close()
+                    end_game(game_code, chat_id)
+                    send_message(chat_id, "🎉 گمراهان و جاسوس‌ها برنده شدن!")
+                    return
+                
+                c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1 AND role IN ('spy', 'misled')", (game_code,))
+                non_citizen_count = c.fetchone()[0]
+                
+                if non_citizen_count == 0:
+                    add_score_to_team(game_code, 'citizen', 2)
+                    conn.commit()
+                    conn.close()
+                    end_game(game_code, chat_id)
+                    send_message(chat_id, "🎉 شهروندان برنده شدن!")
+                    return
+                
+                c.execute("UPDATE games SET status = 'round_finished' WHERE game_code = ?", (game_code,))
                 conn.commit()
                 conn.close()
-                end_game(game_code, chat_id)
-                send_message(chat_id, "🎉 گمراهان و جاسوس‌ها برنده شدن!")
-                return
+                
+                end_game(game_code, chat_id, round_id)
+                
+                keyboard = {
+                    "inline_keyboard": [
+                        [{"text": "🔄 شروع دور جدید", "callback_data": f"new_round:{game_code}"}]
+                    ]
+                }
+                send_message(chat_id, "🎯 این دور به پایان رسید. برای شروع دور جدید روی دکمه زیر کلیک کن.", keyboard)
+        
+        else:
+            names = []
+            tied_player_ids = []
+            for target_id in top_candidates:
+                c.execute("SELECT display_name FROM players WHERE id = ?", (target_id,))
+                name = c.fetchone()
+                if name:
+                    names.append(name[0])
+                    tied_player_ids.append(target_id)
             
-            c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1 AND role IN ('spy', 'misled')", (game_code,))
-            non_citizen_count = c.fetchone()[0]
-            
-            if non_citizen_count == 0:
-                add_score_to_team(game_code, 'citizen', 2)
-                conn.commit()
-                conn.close()
-                end_game(game_code, chat_id)
-                send_message(chat_id, "🎉 شهروندان برنده شدن!")
-                return
-            
-            c.execute("UPDATE games SET status = 'round_finished' WHERE game_code = ?", (game_code,))
             conn.commit()
             conn.close()
             
-            end_game(game_code, chat_id, round_id)
-            
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "🔄 شروع دور جدید", "callback_data": f"new_round:{game_code}"}]
-                ]
-            }
-            send_message(chat_id, "🎯 این دور به پایان رسید. برای شروع دور جدید روی دکمه زیر کلیک کن.", keyboard)
+            send_message(chat_id, f"⚠️ رای‌گیری مساوی شد!\n\n{', '.join(names)} هر کدام {max_votes} رای داشتند.\n\nاین افراد باید دوباره یک کلمه بگن و رای‌گیری مجدد انجام بشه.")
+            start_tie_voting_round(game_code, round_id, tied_player_ids, chat_id)
     
-    else:
-        names = []
-        tied_player_ids = []
-        for target_id in top_candidates:
-            c.execute("SELECT display_name FROM players WHERE id = ?", (target_id,))
-            name = c.fetchone()
-            if name:
-                names.append(name[0])
-                tied_player_ids.append(target_id)
-        
-        conn.commit()
+    except Exception as e:
+        print(f"Error in finish_voting_round: {e}")
+        send_message(chat_id, f"❌ خطا در پایان رای‌گیری: {str(e)}")
+    finally:
         conn.close()
-        
-        send_message(chat_id, f"⚠️ رای‌گیری مساوی شد!\n\n{', '.join(names)} هر کدام {max_votes} رای داشتند.\n\nاین افراد باید دوباره یک کلمه بگن و رای‌گیری مجدد انجام بشه.")
-        start_tie_voting_round(game_code, round_id, tied_player_ids, chat_id)
 
 def start_tie_voting_round(game_code, round_id, tied_player_ids, chat_id):
     alive_players = get_alive_players(game_code)
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("UPDATE games SET is_round_active = 1 WHERE game_code = ?", (game_code,))
-    conn.commit()
-    conn.close()
+    try:
+        c.execute("UPDATE games SET is_round_active = 1 WHERE game_code = ?", (game_code,))
+        conn.commit()
+    except Exception as e:
+        print(f"Error in start_tie_voting_round: {e}")
+        send_message(chat_id, f"❌ خطا در شروع رای‌گیری تساوی: {str(e)}")
+        return
+    finally:
+        conn.close()
     
     for player in alive_players:
         player_id, player_user_id, player_name, role = player
@@ -1035,34 +1173,36 @@ def start_tie_voting_round(game_code, round_id, tied_player_ids, chat_id):
     send_message(chat_id, f"🗳️ رای‌گیری تساوی شروع شد!\n\nفقط بین این افراد رای بدید: {', '.join([p[2] for p in alive_players if p[0] in tied_player_ids])}", keyboard)
 
 def handle_spy_elimination(game_code, player_id, chat_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT user_id, display_name FROM players WHERE id = ? AND game_code = ?", (player_id, game_code))
-    spy = c.fetchone()
-    
-    if not spy:
+    try:
+        c.execute("SELECT user_id, display_name FROM players WHERE id = ? AND game_code = ?", (player_id, game_code))
+        spy = c.fetchone()
+        
+        if not spy:
+            return
+        
+        spy_user_id, spy_name = spy
+        word_pair = get_game_word_pair(game_code)
+        
+        if not word_pair:
+            return
+        
+        main_word = word_pair[0]
+        
+        pending_spy_guesses[spy_user_id] = {
+            'game_code': game_code,
+            'main_word': main_word,
+            'player_id': player_id,
+            'spy_name': spy_name,
+            'chat_id': chat_id
+        }
+        
+        send_message(spy_user_id, f"🔍 شما به عنوان جاسوس حذف شدید!\n\nبرای نجات تیم جاسوس‌ها، کلمه‌ی اصلی رو حدس بزن:\n\n✏️ فقط کلمه رو تایپ کن و بفرست.\n\n⚠️ اگه درست حدس بزنی، جاسوس‌ها برنده می‌شن!")
+    except Exception as e:
+        print(f"Error in handle_spy_elimination: {e}")
+    finally:
         conn.close()
-        return
-    
-    spy_user_id, spy_name = spy
-    word_pair = get_game_word_pair(game_code)
-    
-    if not word_pair:
-        conn.close()
-        return
-    
-    main_word = word_pair[0]
-    
-    pending_spy_guesses[spy_user_id] = {
-        'game_code': game_code,
-        'main_word': main_word,
-        'player_id': player_id,
-        'spy_name': spy_name,
-        'chat_id': chat_id
-    }
-    
-    send_message(spy_user_id, f"🔍 شما به عنوان جاسوس حذف شدید!\n\nبرای نجات تیم جاسوس‌ها، کلمه‌ی اصلی رو حدس بزن:\n\n✏️ فقط کلمه رو تایپ کن و بفرست.\n\n⚠️ اگه درست حدس بزنی، جاسوس‌ها برنده می‌شن!")
-    conn.close()
 
 def check_spy_guess(user_id, guessed_word):
     if user_id not in pending_spy_guesses:
@@ -1094,26 +1234,31 @@ def check_spy_guess(user_id, guessed_word):
         return False
 
 def end_game(game_code, chat_id, round_id=None):
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    
-    if round_id:
-        c.execute("""
-            SELECT p.display_name, p.role, p.score
-            FROM players p
-            JOIN rounds r ON r.game_code = p.game_code
-            WHERE p.game_code = ? AND r.id = ?
-        """, (game_code, round_id))
-    else:
-        c.execute("""
-            SELECT display_name, role, score
-            FROM players
-            WHERE game_code = ?
-            ORDER BY score DESC
-        """, (game_code,))
-    
-    players_data = c.fetchall()
-    conn.close()
+    try:
+        if round_id:
+            c.execute("""
+                SELECT p.display_name, p.role, p.score
+                FROM players p
+                JOIN rounds r ON r.game_code = p.game_code
+                WHERE p.game_code = ? AND r.id = ?
+            """, (game_code, round_id))
+        else:
+            c.execute("""
+                SELECT display_name, role, score
+                FROM players
+                WHERE game_code = ?
+                ORDER BY score DESC
+            """, (game_code,))
+        
+        players_data = c.fetchall()
+    except Exception as e:
+        print(f"Error in end_game: {e}")
+        send_message(chat_id, f"❌ خطا در نمایش نتایج: {str(e)}")
+        return
+    finally:
+        conn.close()
     
     if not players_data:
         send_message(chat_id, "⚠️ هیچ داده‌ای برای نمایش وجود ندارد!")
@@ -1153,13 +1298,16 @@ def add_words_submit():
     word2 = request.form.get('word2')
     category = request.form.get('category', 'general')
     
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
-    c.execute("INSERT INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)", (word1, word2, category))
-    conn.commit()
-    conn.close()
-    
-    return "جفت‌کلمه با موفقیت اضافه شد!"
+    try:
+        c.execute("INSERT INTO word_pairs (word1, word2, category) VALUES (?, ?, ?)", (word1, word2, category))
+        conn.commit()
+        return "جفت‌کلمه با موفقیت اضافه شد!"
+    except Exception as e:
+        return f"❌ خطا: {str(e)}"
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
