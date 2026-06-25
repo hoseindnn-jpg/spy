@@ -9,7 +9,7 @@ import time
 
 app = Flask(__name__)
 
-TOKEN = "8898647964:AAHYLtihj2D6xfLXPltEA4fcUE5wOSktV94"
+TOKEN = os.environ.get("BOT_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 DB_FILE = "spy_game.db"
 
@@ -1037,22 +1037,383 @@ def webhook():
         return jsonify({"ok": True})
 
 # ================ توابع مدیریت رای‌گیری و پایان بازی ================
-def finish_voting_round(game_code, round_id, chat_id):
+
+def reset_votes_for_next_voting(round_id):
+    """
+    وقتی همان دور باید ادامه پیدا کند، رای‌های قبلی پاک می‌شوند
+    تا رای‌گیری بعدی با همین round_id دچار تداخل نشود.
+    """
     conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
     try:
+        c.execute("DELETE FROM votes WHERE round_id = ?", (round_id,))
+        conn.commit()
+    except Exception as e:
+        print(f"Error in reset_votes_for_next_voting: {e}")
+    finally:
+        conn.close()
+
+
+def send_continue_round_message(game_code, chat_id, round_id):
+    """
+    اگر بازی هنوز تمام نشده باشد:
+    - به بازیکنان زنده می‌گوید دوباره یک کلمه بگویند
+    - به مدیر دکمه شروع رای‌گیری می‌دهد
+    """
+    try:
+        alive_players = get_alive_players(game_code)
+
+        if not alive_players:
+            send_message(chat_id, "⚠️ بازیکن زنده‌ای برای ادامه بازی وجود ندارد.")
+            return
+
+        for player in alive_players:
+            player_id, player_user_id, player_name, role = player
+            send_message(
+                player_user_id,
+                "🗣️ <b>بازی هنوز ادامه دارد.</b>\n\n"
+                "لطفاً دوباره هر نفر یک کلمه مرتبط بگه.\n"
+                "بعد از اینکه همه صحبت کردن، مدیر رای‌گیری بعدی رو شروع می‌کنه."
+            )
+
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": "🗳️ شروع رای‌گیری", "callback_data": f"start_voting:{game_code}:{round_id}"}]
+            ]
+        }
+
+        send_message(
+            chat_id,
+            "✅ بازی هنوز تمام نشده.\n\n"
+            "بازیکنان زنده باید دوباره یک کلمه بگن.\n"
+            "بعد از اتمام صحبت‌ها، برای شروع رای‌گیری بعدی روی دکمه زیر بزن.",
+            keyboard
+        )
+
+    except Exception as e:
+        print(f"Error in send_continue_round_message: {e}")
+        send_message(chat_id, f"❌ خطا در ادامه بازی: {str(e)}")
+
+
+def check_game_finished_after_elimination(game_code, chat_id):
+    """
+    بعد از حذف هر بازیکن بررسی می‌کند آیا بازی واقعاً تمام شده یا نه.
+
+    خروجی:
+    True  => بازی تمام شده
+    False => بازی باید ادامه پیدا کند
+    """
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    c = conn.cursor()
+    try:
+        c.execute("""
+            SELECT COUNT(*)
+            FROM players
+            WHERE game_code = ? AND is_alive = 1 AND role = 'citizen'
+        """, (game_code,))
+        citizen_count = c.fetchone()[0]
+
+        c.execute("""
+            SELECT COUNT(*)
+            FROM players
+            WHERE game_code = ? AND is_alive = 1 AND role IN ('spy', 'misled')
+        """, (game_code,))
+        non_citizen_count = c.fetchone()[0]
+
+    except Exception as e:
+        print(f"Error in check_game_finished_after_elimination: {e}")
+        send_message(chat_id, f"❌ خطا در بررسی وضعیت بازی: {str(e)}")
+        return True
+    finally:
+        conn.close()
+
+    if citizen_count == 0:
+        add_score_to_team(game_code, 'misled', 10)
+        add_score_to_team(game_code, 'spy', 6)
+
+        send_message(
+            chat_id,
+            "🎉 شهروندی در بازی باقی نمانده است.\n\n"
+            "گمراهان و جاسوس‌ها برنده شدند!"
+        )
+        end_game(game_code, chat_id)
+        return True
+
+    if non_citizen_count == 0:
+        add_score_to_team(game_code, 'citizen', 2)
+
+        send_message(
+            chat_id,
+            "🎉 هیچ جاسوس یا گمراهی در بازی باقی نمانده است.\n\n"
+            "شهروندان برنده شدند!"
+        )
+        end_game(game_code, chat_id)
+        return True
+
+    return False
+
+
+def handle_spy_elimination(game_code, player_id, chat_id, round_id=None):
+    """
+    وقتی جاسوس با رای‌گیری حذف می‌شود:
+    - به خودش پیام حدس کلمه اصلی ارسال می‌شود
+    - به مدیر گفته می‌شود منتظر حدس جاسوس باشد
+    """
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    c = conn.cursor()
+    try:
+        c.execute(
+            "SELECT user_id, display_name FROM players WHERE id = ? AND game_code = ?",
+            (player_id, game_code)
+        )
+        spy = c.fetchone()
+
+        if not spy:
+            send_message(chat_id, "⚠️ اطلاعات جاسوس حذف‌شده پیدا نشد.")
+            return
+
+        spy_user_id, spy_name = spy
+        word_pair = get_game_word_pair(game_code)
+
+        if not word_pair:
+            send_message(chat_id, "⚠️ جفت‌کلمه این بازی پیدا نشد.")
+            return
+
+        main_word = word_pair[0]
+
+        pending_spy_guesses[spy_user_id] = {
+            'game_code': game_code,
+            'main_word': main_word,
+            'player_id': player_id,
+            'spy_name': spy_name,
+            'chat_id': chat_id,
+            'round_id': round_id
+        }
+
+        send_message(
+            spy_user_id,
+            "🔍 شما به عنوان جاسوس حذف شدید!\n\n"
+            "برای نجات تیم جاسوس‌ها، کلمه اصلی رو حدس بزن.\n\n"
+            "✏️ فقط خود کلمه رو تایپ کن و بفرست.\n\n"
+            "⚠️ اگر درست حدس بزنی، تیم جاسوس‌ها برنده می‌شه.\n"
+            "❌ اگر اشتباه حدس بزنی، بازی با بازیکنان باقی‌مانده ادامه پیدا می‌کنه."
+        )
+
+        send_message(
+            chat_id,
+            f"🕵️‍♂️ <b>{spy_name}</b> جاسوس بود و حذف شد.\n\n"
+            "⏳ حالا باید منتظر حدس جاسوس باشید.\n\n"
+            "اگر جاسوس کلمه اصلی رو درست حدس بزنه، بازی تمام می‌شه.\n"
+            "اگر اشتباه حدس بزنه، بازی با بازیکنان باقی‌مانده ادامه پیدا می‌کنه."
+        )
+
+    except Exception as e:
+        print(f"Error in handle_spy_elimination: {e}")
+        send_message(chat_id, f"❌ خطا در مرحله حدس جاسوس: {str(e)}")
+    finally:
+        conn.close()
+
+
+def check_spy_guess(user_id, guessed_word):
+    """
+    وقتی جاسوس حذف‌شده حدسش را ارسال می‌کند:
+    - اگر درست باشد بازی تمام می‌شود
+    - اگر غلط باشد، در صورت تمام نشدن بازی، همان دور ادامه پیدا می‌کند
+    """
+    if user_id not in pending_spy_guesses:
+        return None
+
+    data = pending_spy_guesses[user_id]
+    game_code = data['game_code']
+    main_word = data['main_word']
+    chat_id = data['chat_id']
+    round_id = data.get('round_id')
+
+    del pending_spy_guesses[user_id]
+
+    guessed_clean = guessed_word.strip().lower()
+    main_clean = main_word.strip().lower()
+
+    if guessed_clean == main_clean:
+        add_score_to_team(game_code, 'spy', 6)
+
+        send_message(
+            user_id,
+            f"✅ <b>درست حدس زدی!</b>\n\n"
+            f"کلمه اصلی: <b>{main_word}</b>\n\n"
+            "🎉 تیم جاسوس‌ها برنده شد!"
+        )
+
+        all_players = get_all_players(game_code)
+        for player in all_players:
+            player_user_id = player[1]
+            if player_user_id != user_id:
+                send_message(
+                    player_user_id,
+                    "🎉 جاسوس کلمه رو درست حدس زد!\n\n"
+                    f"کلمه اصلی: <b>{main_word}</b>\n"
+                    "تیم جاسوس‌ها برنده شد!"
+                )
+
+        send_message(
+            chat_id,
+            "🎯 جاسوس کلمه اصلی رو درست حدس زد.\n\n"
+            f"کلمه اصلی: <b>{main_word}</b>\n"
+            "🏁 بازی تمام شد."
+        )
+
+        end_game(game_code, chat_id)
+        return True
+
+    send_message(
+        user_id,
+        f"❌ <b>اشتباه حدس زدی!</b>\n\n"
+        f"حدس شما: <b>{guessed_word}</b>\n"
+        f"کلمه اصلی: <b>{main_word}</b>\n\n"
+        "اگر بازی هنوز تمام نشده باشد، بازی ادامه پیدا می‌کند."
+    )
+
+    send_message(
+        chat_id,
+        "❌ جاسوس کلمه اصلی رو اشتباه حدس زد.\n\n"
+        f"حدس جاسوس: <b>{guessed_word}</b>\n"
+        f"کلمه اصلی: <b>{main_word}</b>"
+    )
+
+    game_finished = check_game_finished_after_elimination(game_code, chat_id)
+    if game_finished:
+        return False
+
+    if round_id:
+        reset_votes_for_next_voting(round_id)
+        send_continue_round_message(game_code, chat_id, round_id)
+    else:
+        send_message(
+            chat_id,
+            "⚠️ بازی هنوز تمام نشده، اما شناسه دور پیدا نشد و امکان ساخت دکمه رای‌گیری بعدی وجود ندارد."
+        )
+
+    return False
+
+
+def end_game(game_code, chat_id, round_id=None):
+    """
+    پایان واقعی بازی:
+    - وضعیت بازی finished می‌شود
+    - نتیجه برای همه بازیکنان ارسال می‌شود
+    - دکمه شروع دور جدید برای مدیر ارسال می‌شود
+    """
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    c = conn.cursor()
+    try:
+        c.execute(
+            "UPDATE games SET status = 'finished', is_round_active = 0 WHERE game_code = ?",
+            (game_code,)
+        )
+        conn.commit()
+
+        if round_id:
+            c.execute("""
+                SELECT p.display_name, p.role, p.score
+                FROM players p
+                JOIN rounds r ON r.game_code = p.game_code
+                WHERE p.game_code = ? AND r.id = ?
+                ORDER BY p.score DESC
+            """, (game_code, round_id))
+        else:
+            c.execute("""
+                SELECT display_name, role, score
+                FROM players
+                WHERE game_code = ?
+                ORDER BY score DESC
+            """, (game_code,))
+
+        players_data = c.fetchall()
+
+        c.execute("SELECT admin_id FROM games WHERE game_code = ?", (game_code,))
+        admin_row = c.fetchone()
+        admin_id = admin_row[0] if admin_row else None
+
+    except Exception as e:
+        print(f"Error in end_game: {e}")
+        send_message(chat_id, f"❌ خطا در نمایش نتایج: {str(e)}")
+        return
+    finally:
+        conn.close()
+
+    if not players_data:
+        send_message(chat_id, "⚠️ هیچ داده‌ای برای نمایش نتیجه وجود ندارد!")
+        return
+
+    message = "🏁 <b>نتیجه بازی:</b>\n\n"
+
+    for display_name, role, score in players_data:
+        role_persian = get_role_persian(role)
+        message += f"• {display_name} → {role_persian} | امتیاز: {score}\n"
+
+    winner = players_data[0]
+    message += f"\n🏆 <b>برنده: {winner[0]} با {winner[2]} امتیاز!</b>"
+
+    sent_users = set()
+    all_players = get_all_players(game_code)
+
+    for player in all_players:
+        player_user_id = player[1]
+        if player_user_id not in sent_users:
+            send_message(player_user_id, message)
+            sent_users.add(player_user_id)
+
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "🔄 شروع دور جدید", "callback_data": f"new_round:{game_code}"}]
+        ]
+    }
+
+    admin_target = admin_id if admin_id else chat_id
+
+    send_message(
+        admin_target,
+        "🏁 بازی به پایان رسید.\n\n"
+        "برای شروع یک دور جدید با کلمات جدید، روی دکمه زیر بزن.",
+        keyboard
+    )
+def finish_voting_round(game_code, round_id, chat_id):
+    """
+    پایان رای‌گیری چندنفره.
+
+    منطق:
+    - اگر همه رای نداده باشند، تمام نمی‌شود
+    - اگر یک نفر بیشترین رای را داشته باشد، حذف می‌شود
+    - اگر جاسوس حذف شود، وارد مرحله حدس جاسوس می‌شود
+    - اگر جاسوس نبود، بررسی می‌شود بازی تمام شده یا نه
+    - اگر بازی تمام نشده باشد، همان دور ادامه پیدا می‌کند
+    - اگر رای مساوی شود، رای‌گیری تساوی اجرا می‌شود
+    """
+    conn = sqlite3.connect(DB_FILE, timeout=10)
+    c = conn.cursor()
+
+    try:
         alive_players = get_alive_players(game_code)
         total_players = len(alive_players)
-        
+
+        if total_players <= 1:
+            send_message(chat_id, "⚠️ تعداد بازیکنان زنده برای رای‌گیری کافی نیست.")
+            return
+
         c.execute("SELECT COUNT(DISTINCT voter_id) FROM votes WHERE round_id = ?", (round_id,))
         voted_count = c.fetchone()[0]
-        
+
         if voted_count < total_players:
-            send_message(chat_id, f"⚠️ فقط {voted_count} نفر از {total_players} نفر رای دادن!\n\nهمه باید رای بدن. صبر کن تا همه رای بدن.")
+            send_message(
+                chat_id,
+                f"⚠️ فقط {voted_count} نفر از {total_players} نفر رای دادن!\n\n"
+                "همه بازیکنان زنده باید رای بدن. صبر کن تا همه رای بدن."
+            )
             return
-        
+
         c.execute("UPDATE games SET is_round_active = 0 WHERE game_code = ?", (game_code,))
-        
+        conn.commit()
+
         c.execute("""
             SELECT target_id, COUNT(*) as vote_count
             FROM votes
@@ -1061,98 +1422,120 @@ def finish_voting_round(game_code, round_id, chat_id):
             ORDER BY vote_count DESC
         """, (round_id,))
         results = c.fetchall()
-        
+
         if not results:
             send_message(chat_id, "❌ هیچ رایی ثبت نشده!")
             return
-        
+
         max_votes = results[0][1]
         top_candidates = [r[0] for r in results if r[1] == max_votes]
-        
+
         if len(top_candidates) == 1:
             target_id = top_candidates[0]
-            c.execute("SELECT display_name, role FROM players WHERE id = ?", (target_id,))
+
+            c.execute(
+                "SELECT display_name, role FROM players WHERE id = ? AND game_code = ?",
+                (target_id, game_code)
+            )
             eliminated = c.fetchone()
-            
-            if eliminated:
-                eliminated_name, eliminated_role = eliminated
-                c.execute("UPDATE players SET is_alive = 0 WHERE id = ?", (target_id,))
-                conn.commit()
-                
-                role_persian = get_role_persian(eliminated_role)
-                send_message(chat_id, f"⛔️ <b>{eliminated_name}</b> با {max_votes} رای حذف شد!\n\n🔍 نقش مخفی اون: <b>{role_persian}</b>")
-                
-                c.execute("SELECT user_id FROM players WHERE id = ?", (target_id,))
-                eliminated_user = c.fetchone()
-                if eliminated_user:
-                    send_message(eliminated_user[0], f"⛔️ شما با {max_votes} رای حذف شدید!\n\n🔍 نقش شما: <b>{role_persian}</b>")
-                
-                if eliminated_role == 'spy':
-                    conn.close()
-                    handle_spy_elimination(game_code, target_id, chat_id)
-                    return
-                
-                c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1 AND role = 'citizen'", (game_code,))
-                citizen_count = c.fetchone()[0]
-                
-                if citizen_count == 0:
-                    add_score_to_team(game_code, 'misled', 10)
-                    add_score_to_team(game_code, 'spy', 6)
-                    conn.commit()
-                    conn.close()
-                    end_game(game_code, chat_id)
-                    send_message(chat_id, "🎉 گمراهان و جاسوس‌ها برنده شدن!")
-                    return
-                
-                c.execute("SELECT COUNT(*) FROM players WHERE game_code = ? AND is_alive = 1 AND role IN ('spy', 'misled')", (game_code,))
-                non_citizen_count = c.fetchone()[0]
-                
-                if non_citizen_count == 0:
-                    add_score_to_team(game_code, 'citizen', 2)
-                    conn.commit()
-                    conn.close()
-                    end_game(game_code, chat_id)
-                    send_message(chat_id, "🎉 شهروندان برنده شدن!")
-                    return
-                
-                c.execute("UPDATE games SET status = 'round_finished' WHERE game_code = ?", (game_code,))
-                conn.commit()
-                conn.close()
-                
-                end_game(game_code, chat_id, round_id)
-                
-                keyboard = {
-                    "inline_keyboard": [
-                        [{"text": "🔄 شروع دور جدید", "callback_data": f"new_round:{game_code}"}]
-                    ]
-                }
-                send_message(chat_id, "🎯 این دور به پایان رسید. برای شروع دور جدید روی دکمه زیر کلیک کن.", keyboard)
-        
-        else:
-            names = []
-            tied_player_ids = []
-            for target_id in top_candidates:
-                c.execute("SELECT display_name FROM players WHERE id = ?", (target_id,))
-                name = c.fetchone()
-                if name:
-                    names.append(name[0])
-                    tied_player_ids.append(target_id)
-            
+
+            if not eliminated:
+                send_message(chat_id, "⚠️ بازیکن حذف‌شده پیدا نشد.")
+                return
+
+            eliminated_name, eliminated_role = eliminated
+
+            c.execute(
+                "UPDATE players SET is_alive = 0 WHERE id = ? AND game_code = ?",
+                (target_id, game_code)
+            )
             conn.commit()
+
+            role_persian = get_role_persian(eliminated_role)
+
+            send_message(
+                chat_id,
+                f"⛔️ <b>{eliminated_name}</b> با {max_votes} رای حذف شد!\n\n"
+                f"🔍 نقش مخفی او: <b>{role_persian}</b>"
+            )
+
+            c.execute(
+                "SELECT user_id FROM players WHERE id = ? AND game_code = ?",
+                (target_id, game_code)
+            )
+            eliminated_user = c.fetchone()
+
+            if eliminated_user:
+                send_message(
+                    eliminated_user[0],
+                    f"⛔️ شما با {max_votes} رای حذف شدید!\n\n"
+                    f"🔍 نقش شما: <b>{role_persian}</b>"
+                )
+
+            if eliminated_role == 'spy':
+                conn.close()
+                handle_spy_elimination(game_code, target_id, chat_id, round_id)
+                return
+
             conn.close()
-            
-            send_message(chat_id, f"⚠️ رای‌گیری مساوی شد!\n\n{', '.join(names)} هر کدام {max_votes} رای داشتند.\n\nاین افراد باید دوباره یک کلمه بگن و رای‌گیری مجدد انجام بشه.")
-            start_tie_voting_round(game_code, round_id, tied_player_ids, chat_id)
-    
+
+            game_finished = check_game_finished_after_elimination(game_code, chat_id)
+            if game_finished:
+                return
+
+            reset_votes_for_next_voting(round_id)
+
+            send_message(
+                chat_id,
+                "✅ بازی هنوز تمام نشده است.\n\n"
+                "بازی با بازیکنان زنده ادامه پیدا می‌کند."
+            )
+
+            send_continue_round_message(game_code, chat_id, round_id)
+            return
+
+        names = []
+        tied_player_ids = []
+
+        for target_id in top_candidates:
+            c.execute(
+                "SELECT display_name FROM players WHERE id = ? AND game_code = ?",
+                (target_id, game_code)
+            )
+            name = c.fetchone()
+
+            if name:
+                names.append(name[0])
+                tied_player_ids.append(target_id)
+
+        conn.commit()
+        conn.close()
+
+        send_message(
+            chat_id,
+            "⚠️ رای‌گیری مساوی شد!\n\n"
+            f"{', '.join(names)} هر کدام {max_votes} رای داشتند.\n\n"
+            "این افراد باید دوباره یک کلمه بگن و رای‌گیری مجدد فقط بین همین افراد انجام می‌شه."
+        )
+
+        start_tie_voting_round(game_code, round_id, tied_player_ids, chat_id)
+
     except Exception as e:
         print(f"Error in finish_voting_round: {e}")
         send_message(chat_id, f"❌ خطا در پایان رای‌گیری: {str(e)}")
-    finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 
 def start_tie_voting_round(game_code, round_id, tied_player_ids, chat_id):
+    """
+    رای‌گیری مجدد برای حالت تساوی.
+    فقط افراد مساوی‌شده قابل انتخاب هستند.
+    """
     alive_players = get_alive_players(game_code)
-    
+
     conn = sqlite3.connect(DB_FILE, timeout=10)
     c = conn.cursor()
     try:
@@ -1164,130 +1547,55 @@ def start_tie_voting_round(game_code, round_id, tied_player_ids, chat_id):
         return
     finally:
         conn.close()
-    
+
+    tied_names = [p[2] for p in alive_players if p[0] in tied_player_ids]
+
     for player in alive_players:
         player_id, player_user_id, player_name, role = player
+
         vote_buttons = []
         for target in alive_players:
-            if target[0] != player_id and target[0] in tied_player_ids:
-                vote_buttons.append([{"text": target[2], "callback_data": f"vote:{round_id}:{player_id}:{target[0]}"}])
-        
+            target_id, target_user_id, target_name, target_role = target
+
+            if target_id != player_id and target_id in tied_player_ids:
+                vote_buttons.append([
+                    {
+                        "text": target_name,
+                        "callback_data": f"vote:{round_id}:{player_id}:{target_id}"
+                    }
+                ])
+
+        if not vote_buttons:
+            send_message(
+                player_user_id,
+                "🗳️ رای‌گیری تساوی شروع شده، اما گزینه‌ای برای رای دادن شما وجود ندارد."
+            )
+            continue
+
         keyboard = {"inline_keyboard": vote_buttons}
-        send_message(player_user_id, f"🗳️ <b>رای‌گیری تساوی</b>\n\nبه یکی از این افراد رای بده:\n{', '.join([p[2] for p in alive_players if p[0] in tied_player_ids])}", keyboard)
-    
+
+        send_message(
+            player_user_id,
+            "🗳️ <b>رای‌گیری تساوی</b>\n\n"
+            "به یکی از این افراد رای بده:\n"
+            f"{', '.join(tied_names)}",
+            keyboard
+        )
+
     keyboard = {
         "inline_keyboard": [
             [{"text": "✅ پایان رای‌گیری تساوی", "callback_data": f"finish_tie_voting:{game_code}:{round_id}"}]
         ]
     }
-    send_message(chat_id, f"🗳️ رای‌گیری تساوی شروع شد!\n\nفقط بین این افراد رای بدید: {', '.join([p[2] for p in alive_players if p[0] in tied_player_ids])}", keyboard)
 
-def handle_spy_elimination(game_code, player_id, chat_id):
-    conn = sqlite3.connect(DB_FILE, timeout=10)
-    c = conn.cursor()
-    try:
-        c.execute("SELECT user_id, display_name FROM players WHERE id = ? AND game_code = ?", (player_id, game_code))
-        spy = c.fetchone()
-        
-        if not spy:
-            return
-        
-        spy_user_id, spy_name = spy
-        word_pair = get_game_word_pair(game_code)
-        
-        if not word_pair:
-            return
-        
-        main_word = word_pair[0]
-        
-        pending_spy_guesses[spy_user_id] = {
-            'game_code': game_code,
-            'main_word': main_word,
-            'player_id': player_id,
-            'spy_name': spy_name,
-            'chat_id': chat_id
-        }
-        
-        send_message(spy_user_id, f"🔍 شما به عنوان جاسوس حذف شدید!\n\nبرای نجات تیم جاسوس‌ها، کلمه‌ی اصلی رو حدس بزن:\n\n✏️ فقط کلمه رو تایپ کن و بفرست.\n\n⚠️ اگه درست حدس بزنی، جاسوس‌ها برنده می‌شن!")
-    except Exception as e:
-        print(f"Error in handle_spy_elimination: {e}")
-    finally:
-        conn.close()
+    send_message(
+        chat_id,
+        "🗳️ رای‌گیری تساوی شروع شد!\n\n"
+        "فقط بین این افراد رای بدید:\n"
+        f"{', '.join(tied_names)}",
+        keyboard
+    )
 
-def check_spy_guess(user_id, guessed_word):
-    if user_id not in pending_spy_guesses:
-        return None
-    
-    data = pending_spy_guesses[user_id]
-    game_code = data['game_code']
-    main_word = data['main_word']
-    chat_id = data['chat_id']
-    
-    del pending_spy_guesses[user_id]
-    
-    guessed_clean = guessed_word.strip().lower()
-    main_clean = main_word.strip().lower()
-    
-    if guessed_clean == main_clean:
-        add_score_to_team(game_code, 'spy', 6)
-        send_message(user_id, f"✅ <b>درست حدس زدی!</b>\n\nکلمه اصلی: {main_word}\n\n🎉 تیم جاسوس‌ها برنده شدن!")
-        
-        all_players = get_all_players(game_code)
-        for player in all_players:
-            if player[1] != user_id:
-                send_message(player[1], f"🎉 جاسوس کلمه رو درست حدس زد! تیم جاسوس‌ها برنده شدن!")
-        
-        end_game(game_code, chat_id)
-        return True
-    else:
-        send_message(user_id, f"❌ <b>اشتباه حدس زدی!</b>\n\nکلمه‌ای که گفتی: {guessed_word}\n\nشما حذف می‌شوید و بازی ادامه پیدا می‌کند.")
-        return False
-
-def end_game(game_code, chat_id, round_id=None):
-    conn = sqlite3.connect(DB_FILE, timeout=10)
-    c = conn.cursor()
-    try:
-        if round_id:
-            c.execute("""
-                SELECT p.display_name, p.role, p.score
-                FROM players p
-                JOIN rounds r ON r.game_code = p.game_code
-                WHERE p.game_code = ? AND r.id = ?
-            """, (game_code, round_id))
-        else:
-            c.execute("""
-                SELECT display_name, role, score
-                FROM players
-                WHERE game_code = ?
-                ORDER BY score DESC
-            """, (game_code,))
-        
-        players_data = c.fetchall()
-    except Exception as e:
-        print(f"Error in end_game: {e}")
-        send_message(chat_id, f"❌ خطا در نمایش نتایج: {str(e)}")
-        return
-    finally:
-        conn.close()
-    
-    if not players_data:
-        send_message(chat_id, "⚠️ هیچ داده‌ای برای نمایش وجود ندارد!")
-        return
-    
-    message = "🏁 <b>نتیجه بازی:</b>\n\n"
-    for display_name, role, score in players_data:
-        role_persian = get_role_persian(role)
-        message += f"• {display_name} → {role_persian} | امتیاز: {score}\n"
-    
-    if players_data:
-        winner = players_data[0]
-        message += f"\n🏆 <b>برنده: {winner[0]} با {winner[2]} امتیاز!</b>"
-    
-    all_players = get_all_players(game_code)
-    for player in all_players:
-        send_message(player[1], message)
-    
-    send_message(chat_id, message)
 
 # ================ مدیریت کلمات ================
 @app.route('/add_words')
