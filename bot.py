@@ -9,7 +9,7 @@ import time
 
 app = Flask(__name__)
 
-TOKEN = "8898647964:AAHDany4sKVKfTbjaBFFg2lsQNnyad6gMg4"
+TOKEN = "8898647964:AAHYLtihj2D6xfLXPltEA4fcUE5wOSktV94"
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 DB_FILE = "spy_game.db"
 
