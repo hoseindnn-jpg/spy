@@ -54,7 +54,7 @@ def register_webhook():
     return jsonify(result), 200
 
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
+@app.route(/webhook, methods=["POST"])
 def telegram_webhook():
     """دریافت آپدیت‌های ارسالی از تلگرام"""
     update = request.get_json()
