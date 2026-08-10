@@ -42,6 +42,8 @@ def init_db():
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, round_id INTEGER, voter_id INTEGER, 
                        target_id INTEGER, voted_at TEXT,
                        FOREIGN KEY(round_id) REFERENCES rounds(id))''')
+        db.execute('''CREATE TABLE IF NOT EXISTS user_states 
+                      (user_id INTEGER PRIMARY KEY, state TEXT, data TEXT)''')
 
 # --- توابع مدیریت کلمات ---
 def add_word_pair(word1, word2, category="general"):
