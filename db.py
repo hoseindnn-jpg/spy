@@ -62,14 +62,20 @@ def init_db():
             )
         """)
 
-        # جدول راندها
+        # جدول راندها - نسخه هماهنگ با game_logic.py
         db.execute("""
             CREATE TABLE IF NOT EXISTS rounds (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 game_code TEXT NOT NULL,
                 round_number INTEGER NOT NULL,
                 word_pair_id INTEGER,
+                word1 TEXT,
+                word2 TEXT,
                 status TEXT DEFAULT 'speaking',
+                tie_break_level INTEGER DEFAULT 0,
+                tie_target_data TEXT,
+                pending_elimination_user_id INTEGER,
+                pending_spy_user_id INTEGER,
                 started_at TEXT,
                 ended_at TEXT,
                 FOREIGN KEY(game_code) REFERENCES games(game_code)
@@ -101,6 +107,7 @@ def init_db():
         # ایندکس‌ها برای سرعت بهتر
         db.execute("CREATE INDEX IF NOT EXISTS idx_players_game_code ON players(game_code)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_rounds_game_code ON rounds(game_code)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_rounds_composite ON rounds(game_code, round_number)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_votes_round_id ON votes(round_id)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_votes_voter_id ON votes(voter_id)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_user_states_game_code ON user_states(game_code)")
@@ -216,7 +223,7 @@ def get_current_round(game_code):
         return db.execute("""
             SELECT * FROM rounds
             WHERE game_code = ?
-            ORDER BY id DESC
+            ORDER BY round_number DESC, id DESC
             LIMIT 1
         """, (game_code,)).fetchone()
 
