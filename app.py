@@ -113,9 +113,6 @@ def handle_message(message):
 
     create_game_lobby(chat_id)
 
-        
-        create_game_lobby(chat_id)
-
 
 def create_game_lobby(chat_id):
     """ایجاد لابی بازی جدید در گروه"""
