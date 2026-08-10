@@ -105,11 +105,14 @@ def handle_message(message):
             )
 
     elif text.startswith("/newgame"):
-        # بررسی اینکه آیا چت یک گروه یا سوپرگروه است
         chat_type = message.get("chat", {}).get("type")
-        if chat_type not in ["group", "supergroup"]:
-            send_message(chat_id, "⚠️ بازی جاسوس را باید در یک گروه شروع کنید!")
+    
+        if chat_type != "private":
+            send_message(chat_id, "⚠️ لطفاً برای ساخت بازی، به صورت خصوصی با ربات چت کنید.")
             return
+
+    create_game_lobby(chat_id)
+
         
         create_game_lobby(chat_id)
 
@@ -193,7 +196,13 @@ def handle_callback_query(callback_query):
     if not data:
         return
 
-    # شروع بازی توسط ادمین در گروه
+    # ساخت بازی جدید
+    elif data == "create_new_game":
+        create_game_lobby(chat_id)
+        answer_callback_query(query_id, "بازی جدید ساخته شد.")
+        return
+
+    # شروع بازی توسط میزبان
     if data.startswith("start_game:"):
         game_code = data.split(":")[1]
         game = game_logic.get_game(game_code)
@@ -206,16 +215,14 @@ def handle_callback_query(callback_query):
             answer_callback_query(query_id, "بازی در حال جریان است یا به اتمام رسیده.", show_alert=True)
             return
 
-        # فراخوانی لاجیک شروع بازی
         result = game_logic.start_game_round(game_code, chat_id)
         if not result.get("ok"):
             answer_callback_query(query_id, result.get("error", "خطا در شروع بازی"), show_alert=True)
         else:
             answer_callback_query(query_id, "بازی با موفقیت شروع شد!")
-            # غیرفعال کردن دکمه‌های پنل مدیریت لابی
             edit_message_reply_markup(chat_id, message_id, reply_markup=None)
 
-    # نمایش لیست بازیکنانی که جوین شده‌اند
+    # نمایش لیست بازیکنان
     elif data.startswith("show_players:"):
         game_code = data.split(":")[1]
         players = game_logic.get_players(game_code)
@@ -227,9 +234,8 @@ def handle_callback_query(callback_query):
         answer_callback_query(query_id, "لیست بازیکنان ارسال شد.")
         send_message(chat_id, f"👥 <b>بازیکنان ثبت‌نام شده:</b>\n{player_list}")
 
-    # ثبت رای بازیکنان در مرحله رای‌گیری
+    # ثبت رای
     elif data.startswith("vote:"):
-        # ساختار دیتا: vote:game_code:target_user_id
         parts = data.split(":")
         game_code = parts[1]
         target_id = int(parts[2])
@@ -239,13 +245,11 @@ def handle_callback_query(callback_query):
             answer_callback_query(query_id, "در حال حاضر مرحله رای‌گیری فعال نیست.", show_alert=True)
             return
 
-        # بررسی زنده بودن رای دهنده
         voter = game_logic.get_player_by_user_id(game_code, user_id)
         if not voter or not voter["is_alive"]:
             answer_callback_query(query_id, "بازیکنان حذف شده نمی‌توانند رای دهند.", show_alert=True)
             return
 
-        # ثبت رای در دیتابیس
         game_logic.save_vote(current_round["id"], user_id, target_id)
         answer_callback_query(query_id, "رای شما با موفقیت ثبت شد.")
 
