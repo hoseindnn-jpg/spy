@@ -77,22 +77,47 @@ def telegram_webhook():
 def handle_message(message):
     chat_id = message.get("chat", {}).get("id")
     user_id = message.get("from", {}).get("id")
-    text = message.get("text", "").strip()
-    username = message.get("from", {}).get("username", "")
-    first_name = message.get("from", {}).get("first_name", "User")
-    display_name = f"@{username}" if username else first_name
+    text = (message.get("text") or "").strip()
 
-    if not chat_id or not user_id or not text:
+    if not chat_id or not user_id:
         return
 
+    if not text:
+        return
+
+    # 1) بررسی وضعیت کاربر: آیا منتظر ارسال نام مستعار است؟
+    with get_db() as db:
+        state_row = db.execute(
+            "SELECT state, data FROM user_states WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
+
+    if state_row and state_row[0] == "awaiting_name":
+        game_code = state_row[1]
+
+        # اگر کاربر به جای نام، دستور فرستاد
+        if text.startswith("/"):
+            send_message(
+                chat_id,
+                "❌ لطفاً فقط نام مستعار خود را ارسال کنید، نه دستور.\n"
+                "مثال: علی"
+            )
+            return
+
+        process_name_submission(chat_id, user_id, text, game_code)
+        return
+
+    # 2) دستور /start
     if text.startswith("/start"):
         parts = text.split(" ", 1)
 
+        # اگر /start با کد بازی آمده باشد
         if len(parts) > 1 and parts[1].strip():
             game_code = parts[1].strip()
-            join_player_to_game(chat_id, user_id, display_name, game_code)
+            join_player_to_game(chat_id, user_id, game_code)
             return
 
+        # اگر فقط /start باشد
         send_message(
             chat_id,
             "<b>به ربات بازی جاسوس خوش آمدید! 🕵️‍♂️</b>\n\n"
@@ -105,12 +130,22 @@ def handle_message(message):
         )
         return
 
+    # 3) دستور /newgame
     if text.startswith("/newgame"):
         create_game_lobby(chat_id)
         return
 
+    # 4) پیام پیش‌فرض
+    send_message(
+        chat_id,
+        "برای شروع، یکی از این کارها را انجام بده:\n"
+        "• /start برای باز کردن منو\n"
+        "• /newgame برای ساخت بازی جدید"
+    )
 
 def create_game_lobby(chat_id):
+    from datetime import datetime
+
     game_code = f"G{chat_id}".replace("-", "")
 
     with get_db() as db:
@@ -128,24 +163,39 @@ def create_game_lobby(chat_id):
                 """,
                 (GAME_STATUS_REGISTERING, game_code)
             )
+
             db.execute(
                 "DELETE FROM players WHERE game_code = ?",
                 (game_code,)
             )
+
         else:
             db.execute(
                 """
-                INSERT INTO games (game_code, status, round_number, is_round_active)
-                VALUES (?, ?, 0, 0)
+                INSERT INTO games (
+                    game_code,
+                    admin_id,
+                    status,
+                    created_at,
+                    round_number,
+                    is_round_active
+                )
+                VALUES (?, ?, ?, ?, 0, 0)
                 """,
-                (game_code, GAME_STATUS_REGISTERING)
+                (
+                    game_code,
+                    chat_id,
+                    GAME_STATUS_REGISTERING,
+                    datetime.now().isoformat()
+                )
             )
 
     bot_username = os.getenv("BOT_USERNAME", "").strip()
+
     if not bot_username:
         send_message(
             chat_id,
-            "⚠️ متغیر محیطی <code>BOT_USERNAME</code> تنظیم نشده است."
+            "⚠️ متغیر محیطی BOT_USERNAME تنظیم نشده است."
         )
         return
 
@@ -155,20 +205,26 @@ def create_game_lobby(chat_id):
         chat_id,
         "🎮 <b>بازی جدید ساخته شد!</b>\n\n"
         f"کد بازی: <code>{game_code}</code>\n\n"
-        "لینک زیر را برای بازیکن‌ها بفرست تا یکی‌یکی عضو بازی شوند:\n"
+        "لینک زیر را برای بازیکن‌ها بفرست:\n"
         f"{join_link}\n\n"
         "بعد از اینکه همه عضو شدند، دکمه شروع بازی را بزن.",
         reply_markup={
             "inline_keyboard": [
                 [{"text": "شروع بازی 🚀", "callback_data": f"start_game:{game_code}"}],
-                [{"text": "نمایش لیست بازیکنان 👥", "callback_data": f"show_players:{game_code}"}]
+                [{"text": "نمایش بازیکنان 👥", "callback_data": f"show_players:{game_code}"}]
             ]
         }
     )
 
 
-def join_player_to_game(user_chat_id, user_id, display_name, game_code):
+def join_player_to_game(user_chat_id, user_id, game_code):
+    """
+    شروع فرآیند عضویت در بازی
+    به جای عضویت مستقیم، ابتدا از کاربر نام مستعار می‌گیرد
+    """
+
     game = game_logic.get_game(game_code)
+
     if not game:
         send_message(
             user_chat_id,
@@ -176,14 +232,13 @@ def join_player_to_game(user_chat_id, user_id, display_name, game_code):
         )
         return
 
-    if game["status"] != GAME_STATUS_REGISTERING:
-        send_message(
-            user_chat_id,
-            "⚠️ ثبت‌نام این بازی بسته شده است."
-        )
+    if not game or game["status"] != GAME_STATUS_REGISTERING:
+        send_message(chat_id, "⚠️ ثبت‌نام این بازی بسته شده است.")
         return
 
     with get_db() as db:
+
+        # بررسی اینکه کاربر قبلاً عضو این بازی نشده باشد
         existing_player = db.execute(
             "SELECT * FROM players WHERE game_code = ? AND user_id = ?",
             (game_code, user_id)
@@ -192,22 +247,26 @@ def join_player_to_game(user_chat_id, user_id, display_name, game_code):
         if existing_player:
             send_message(
                 user_chat_id,
-                "شما از قبل عضو این بازی هستید."
+                "✅ شما از قبل عضو این بازی هستید."
             )
             return
 
+        # ذخیره وضعیت کاربر برای دریافت نام
         db.execute(
             """
-            INSERT INTO players (game_code, user_id, display_name, role, is_alive, score)
-            VALUES (?, ?, ?, NULL, 1, 0)
+            INSERT OR REPLACE INTO user_states (user_id, state, data)
+            VALUES (?, ?, ?)
             """,
-            (game_code, user_id, display_name)
+            (user_id, "awaiting_name", game_code)
         )
 
     send_message(
         user_chat_id,
-        "🎉 شما با موفقیت عضو بازی شدید. منتظر شروع بازی بمانید."
+        "🕵️‍♂️ لطفاً نام مستعار خود را ارسال کنید:\n\n"
+        "• بین ۲ تا ۱۵ کاراکتر\n"
+        "• نام تکراری نباشد"
     )
+
 
 
 def handle_callback_query(callback_query):
@@ -298,7 +357,12 @@ def handle_callback_query(callback_query):
             return
 
         game_code = parts[1]
-        target_id = int(parts[2])
+        try:
+            target_id = int(parts[2])
+        except ValueError:
+            answer_callback_query(query_id, "شناسه رای نامعتبر است.", show_alert=True)
+            return
+
 
         current_round = game_logic.get_current_round(game_code)
         if not current_round or current_round["status"] != "voting":
@@ -327,6 +391,30 @@ def handle_callback_query(callback_query):
         "دکمه ناشناخته است.",
         show_alert=True
     )
+def process_name_submission(chat_id, user_id, name, game_code):
+    # ۱. بررسی طول نام
+    if len(name) < 2 or len(name) > 15:
+        send_message(chat_id, "❌ نام باید بین ۲ تا ۱۵ کاراکتر باشد. دوباره بفرست:")
+        return
+
+    with get_db() as db:
+        # ۲. بررسی تکراری نبودن نام در این بازی
+        duplicate = db.execute("SELECT 1 FROM players WHERE game_code = ? AND display_name = ?", 
+                               (game_code, name)).fetchone()
+        if duplicate:
+            send_message(chat_id, f"❌ نام '{name}' قبلاً توسط بازیکن دیگری انتخاب شده. یک نام دیگر بفرست:")
+            return
+
+        # ۳. ثبت نهایی در جدول بازیکنان
+        from datetime import datetime
+        db.execute('''INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at) 
+                      VALUES (?, ?, ?, NULL, 1, 0, ?)''', 
+                   (game_code, user_id, name, datetime.now().isoformat()))
+        
+        # ۴. پاک کردن وضعیت کاربر
+        db.execute("DELETE FROM user_states WHERE user_id = ?", (user_id,))
+
+    send_message(chat_id, f"✅ عالیه {name}! تو با موفقیت به بازی {game_code} اضافه شدی.")
 
 
 if __name__ == "__main__":
