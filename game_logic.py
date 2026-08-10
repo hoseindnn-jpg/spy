@@ -3,6 +3,8 @@ from datetime import datetime
 
 from db import get_db
 from telegram_api import send_message, edit_message_reply_markup, answer_callback_query
+import json
+import os
 
 
 ROLE_CITIZEN = "citizen"
@@ -96,18 +98,25 @@ def get_word_pair_by_id(word_pair_id):
 
 
 def get_random_word_pair():
-    with get_db() as db:
-        return db.execute(
-            "SELECT * FROM word_pairs ORDER BY RANDOM() LIMIT 1"
-        ).fetchone()
+    words_path = os.path.join(os.path.dirname(__file__), "words.json")
+
+    if not os.path.exists(words_path):
+        return None
+
+    try:
+        with open(words_path, "r", encoding="utf-8") as f:
+            words = json.load(f)
+
+        if not isinstance(words, list) or not words:
+            return None
+
+        return random.choice(words)
+
+    except Exception as e:
+        print(f"Error reading words.json: {e}")
+        return None
 
 
-def increment_word_pair_used_count(word_pair_id):
-    with get_db() as db:
-        db.execute(
-            "UPDATE word_pairs SET used_count = used_count + 1 WHERE id = ?",
-            (word_pair_id,)
-        )
 
 
 def reset_all_players_alive(game_code):
@@ -285,16 +294,10 @@ def assign_roles(game_code):
     }
 
 
-def send_roles_to_players(game_code):
+def send_roles_to_players(game_code, word_pair):
     game = get_game(game_code)
     if not game:
         return {"ok": False, "error": "بازی پیدا نشد."}
-
-    word_pair_id = game["word_pair_id"]
-    word_pair = get_word_pair_by_id(word_pair_id)
-
-    if not word_pair:
-        return {"ok": False, "error": "کلمه‌های این راند پیدا نشد."}
 
     players = get_players(game_code)
 
@@ -323,7 +326,6 @@ def send_roles_to_players(game_code):
 
     return {"ok": True}
 
-
 def start_game_round(game_code, chat_id):
     game = get_game(game_code)
     if not game:
@@ -339,14 +341,14 @@ def start_game_round(game_code, chat_id):
 
     word_pair = get_random_word_pair()
     if not word_pair:
-        return {"ok": False, "error": "هیچ جفت کلمه‌ای در دیتابیس وجود ندارد."}
+        return {"ok": False, "error": "فایل words.json پیدا نشد یا خالی است."}
 
     round_number = (game["round_number"] or 0) + 1
 
     set_game_round_info(
         game_code=game_code,
         round_number=round_number,
-        word_pair_id=word_pair["id"],
+        word_pair_id=None,
         is_round_active=1
     )
 
@@ -356,13 +358,18 @@ def start_game_round(game_code, chat_id):
     round_id = create_round(
         game_code=game_code,
         round_number=round_number,
-        word_pair_id=word_pair["id"],
+        word_pair_id=None,
         status=ROUND_STATUS_SPEAKING
     )
 
-    increment_word_pair_used_count(word_pair["id"])
+    # اگر جدول rounds را اصلاح کرده‌ای، بهتر است word1 و word2 را هم ذخیره کنی
+    with get_db() as db:
+        db.execute(
+            "UPDATE rounds SET word1 = ?, word2 = ? WHERE id = ?",
+            (word_pair["word1"], word_pair["word2"], round_id)
+        )
 
-    send_roles_to_players(game_code)
+    send_roles_to_players(game_code, word_pair)
 
     send_message(
         chat_id,
@@ -376,6 +383,7 @@ def start_game_round(game_code, chat_id):
         "round_id": round_id,
         "round_number": round_number
     }
+
 
 
 def add_score_to_team(game_code, team_role, score_points):
