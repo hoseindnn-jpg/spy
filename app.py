@@ -486,29 +486,49 @@ def process_name_submission(chat_id, user_id, name, game_code):
         return
 
     with get_db() as db:
-        # بررسی عدم وجود نام تکراری در این بازی مشخص
         duplicate = db.execute(
             "SELECT 1 FROM players WHERE game_code = ? AND display_name = ?",
             (game_code, name)
         ).fetchone()
 
         if duplicate:
-            send_message(chat_id, f"❌ نام '{name}' قبلاً توسط بازیکن دیگری انتخاب شده است. نام دیگری بفرستید:")
+            send_message(
+                chat_id,
+                f"❌ نام '{name}' قبلاً توسط بازیکن دیگری انتخاب شده است. نام دیگری بفرستید:"
+            )
             return
 
-        # ثبت نام مستعار بازیکن جدید
         db.execute(
             """
-            INSERT INTO players (game_code, user_id, display_name, role, is_alive, score, joined_at)
+            INSERT INTO players (
+                game_code, user_id, display_name,
+                role, is_alive, score, joined_at
+            )
             VALUES (?, ?, ?, NULL, 1, 0, ?)
             """,
             (game_code, user_id, name, datetime.now().isoformat())
         )
 
-        # پاک کردن وضعیت موقت کاربر
-        db.execute("DELETE FROM user_states WHERE user_id = ?", (user_id,))
+        db.execute(
+            "DELETE FROM user_states WHERE user_id = ?",
+            (user_id,)
+        )
 
-    send_message(chat_id, f"✅ عالیه {name}! شما با موفقیت عضو بازی <code>{game_code}</code> شدید.")
+    # دریافت اطلاعات بازی برای پیدا کردن مدیر
+    game = game_logic.get_game(game_code)
+
+    # اعلان به مدیر؛ اگر خود مدیر عضو شده باشد، پیام تکراری نفرست
+    if game and game["admin_id"] != user_id:
+        send_message(
+            game["admin_id"],
+        f"👤 بازیکن <b>{name}</b> عضو بازی شد."
+        )
+    # تأیید عضویت برای بازیکن
+    send_message(
+        chat_id,
+        f"✅ عالیه {name}! شما با موفقیت عضو بازی <code>{game_code}</code> شدید."
+    )
+
 
 
 if __name__ == "__main__":
