@@ -315,6 +315,15 @@ def handle_callback_query(callback_query):
         if not result.get("ok"):
             answer_callback_query(query_id, result.get("error", "خطا در شروع بازی"), show_alert=True)
             return
+                # اعلام تعداد نقش‌ها به مدیر فقط در راند اول
+        assignment = result.get("assignment", {})
+        if assignment.get("ok"):
+            total_players = len(game_logic.get_players(game_code))
+            send_message(
+                game["admin_id"],
+                f"📊 <b>توزیع نقش‌های راند اول:</b>\n"
+                f"{game_logic.get_role_counts_text(assignment['mapping'], total_players)}"
+            )
 
         # پس از توزیع نقش‌ها، دکمه شروع رأی‌گیری برای مدیر گروه ارسال می‌شود
         send_message(
