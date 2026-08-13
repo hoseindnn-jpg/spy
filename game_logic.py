@@ -1086,5 +1086,22 @@ def get_game(game_code):
         return None
 
     return db.get_game(game_code)
+def get_players(game_code):
+    """
+    دریافت تمام بازیکنان بازی.
+    """
+    if not game_code:
+        return []
 
+    return db.get_players(game_code)
+
+
+def get_player(game_code, user_id):
+    """
+    دریافت یک بازیکن مشخص.
+    """
+    if not game_code or user_id is None:
+        return None
+
+    return db.get_player(game_code, user_id)
     
