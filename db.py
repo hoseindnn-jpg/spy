@@ -4,7 +4,7 @@ import os
 import json
 from contextlib import contextmanager
 
-DB_FILE = os.getenv("DB_FILE", "bot_database.db")
+DB_FILE = os.getenv("DATABASE_PATH", os.getenv("DB_FILE", "bot_database.db"))
 
 
 @contextmanager
@@ -121,6 +121,10 @@ def init_db():
         db.execute("CREATE INDEX IF NOT EXISTS idx_votes_round_id ON votes(round_id)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_votes_voter_id ON votes(voter_id)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_user_states_game_code ON user_states(game_code)")
+        db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_votes_round_voter_unique
+            ON votes(round_id, voter_id)
+        """)
 
 
 # ─────────────── ابزار کمکی ───────────────
