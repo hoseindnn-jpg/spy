@@ -1078,4 +1078,12 @@ def start_next_round(game_code):
         raise ValueError("راند قبلی هنوز تمام نشده است.")
 
     return start_game_round(game_code)
-   
+ def get_game(game_code):
+    """
+    دریافت اطلاعات بازی با استفاده از کد بازی.
+    """
+    if not game_code:
+        return None
+
+    return db.get_game(game_code)
+  
