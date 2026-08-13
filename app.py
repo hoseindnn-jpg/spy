@@ -331,7 +331,7 @@ def handle_callback_query(callback_query):
         edit_message_reply_markup(chat_id, message_id, reply_markup=None)
         return
 
-    # ۴) شروع فاز رای‌گیری توسط مدیر
+    # ۴) شروع فاز رای‌گیری توسط مدیر (اصلاح: ارسال دکمه‌ها به تک‌تک بازیکنان زنده در پی‌وی)
     elif data.startswith("start_voting:"):
         game_code = data.split(":", 1)[1]
         res = game_logic.start_voting_round(game_code, chat_id)
@@ -339,20 +339,40 @@ def handle_callback_query(callback_query):
             answer_callback_query(query_id, res.get("error", "امکان شروع رای‌گیری وجود ندارد."), show_alert=True)
             return
 
-        # دریافت دکمه‌های رای‌گیری برای تک‌تک بازیکنان زنده
+        # دریافت لیست همه بازیکنان زنده
         alive_players = game_logic.get_alive_players(game_code)
-        buttons = []
+
+        # ارسال پنل رأی برای هر بازیکن زنده به صورت خصوصی
         for p in alive_players:
-            buttons.append([{"text": f"🗳 رای به {p['display_name']}", "callback_data": f"vote:{game_code}:{p['user_id']}"}])
+            buttons = []
+            for target in alive_players:
+                # بازیکن نمی‌تواند به خودش رأی بدهد
+                if target["user_id"] != p["user_id"]:
+                    buttons.append([
+                        {
+                            "text": f"🗳 رای به {target['display_name']}",
+                            "callback_data": f"vote:{game_code}:{target['user_id']}"
+                        }
+                    ])
 
-        # اضافه کردن دکمه خاتمه اجباری برای اتمام سریع توسط مدیر
-        buttons.append([{"text": "🏁 پایان رأی‌گیری (توسط مدیر)", "callback_data": f"force_finish_vote:{game_code}"}])
+            send_message(
+                p["user_id"],
+                "🗳 <b>رأی‌گیری آغاز شد!</b>\n"
+                "بازیکن زنده مورد نظر خود را برای حذف انتخاب کنید:",
+                reply_markup={"inline_keyboard": buttons}
+            )
 
+        # پیام اعلان در گروه + دکمه اتمام رأی‌گیری برای مدیر
         send_message(
             chat_id,
             "🗳 <b>رأی‌گیری آغاز شد!</b>\n"
-            "بازیکن زنده مورد نظر خود را برای حذف انتخاب کنید:",
-            reply_markup={"inline_keyboard": buttons}
+            "دکمه‌های رأی‌گیری به صورت خصوصی برای هر بازیکن ارسال شد.\n"
+            "همه بازیکنان زنده باید رأی خود را ثبت کنند.",
+            reply_markup={
+                "inline_keyboard": [
+                    [{"text": "🏁 پایان رأی‌گیری (توسط مدیر)", "callback_data": f"force_finish_vote:{game_code}"}]
+                ]
+            }
         )
         edit_message_reply_markup(chat_id, message_id, reply_markup=None)
         answer_callback_query(query_id, "رأی‌گیری آغاز شد.")
@@ -392,9 +412,31 @@ def handle_callback_query(callback_query):
             edit_message_reply_markup(chat_id, message_id, reply_markup=None)
         return
 
-    # ۶) پایان دادن دستی به رأی‌گیری توسط مدیر
+    # ۶) پایان دادن دستی به رأی‌گیری توسط مدیر (اصلاح: فقط مدیر + بررسی رأی‌ندادگان)
     elif data.startswith("force_finish_vote:"):
         game_code = data.split(":", 1)[1]
+        game = game_logic.get_game(game_code)
+
+        # فقط مدیر بازی اجازه دارد رأی‌گیری را به پایان برساند
+        if not game or user_id != game["admin_id"]:
+            answer_callback_query(
+                query_id,
+                "فقط مدیر بازی می‌تواند رأی‌گیری را به پایان برساند.",
+                show_alert=True
+            )
+            return
+
+        # اگر هنوز همه رأی نداده‌اند، هشدار بده و لیست رأی‌ندادگان را نمایش بده
+        non_voters = game_logic.get_non_voters(game_code)
+        if non_voters:
+            names = "\n".join([f"- {player['display_name']}" for player in non_voters])
+            answer_callback_query(
+                query_id,
+                f"⚠️ هنوز برخی از بازیکنان رأی نداده‌اند:\n{names}",
+                show_alert=True
+            )
+            return
+
         # اجرای اتمام رای‌گیری و هدایت به شمارش آرا
         game_logic.finish_voting_round(game_code, chat_id)
         edit_message_reply_markup(chat_id, message_id, reply_markup=None)
@@ -462,7 +504,7 @@ def process_name_submission(chat_id, user_id, name, game_code):
             """,
             (game_code, user_id, name, datetime.now().isoformat())
         )
-        
+
         # پاک کردن وضعیت موقت کاربر
         db.execute("DELETE FROM user_states WHERE user_id = ?", (user_id,))
 
