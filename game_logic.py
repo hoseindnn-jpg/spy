@@ -577,7 +577,10 @@ def start_tie_voting_round(game_code, tied_user_ids):
     """
     current_round = db.get_current_round(game_code)
     if not current_round:
-        raise ValueError("راند فعالی پیدا _targets = get_eligible_vote_targets(game_code, tied_user_ids)
+        raise ValueError("راند فعالی پیدا نشد.")
+
+    # فقط بازیکنان زنده که در لیست رأی‌های مساوی هستند
+    valid_targets = get_eligible_vote_targets(game_code, tied_user_ids)
     valid_ids = [player["user_id"] for player in valid_targets]
 
     if len(valid_ids) < 2:
@@ -601,6 +604,7 @@ def start_tie_voting_round(game_code, tied_user_ids):
         "targets": valid_targets,
         "voters": get_eligible_voters(game_code)
     }
+
 
 
 def cast_vote(game_code, voter_id, target_id):
